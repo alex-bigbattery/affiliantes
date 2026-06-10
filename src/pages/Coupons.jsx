@@ -2,6 +2,21 @@ import { useState, useEffect, useMemo } from 'react'
 import { Info, Pencil, Search, Tag } from 'lucide-react'
 import { api, fmt, fmtDate } from '../api'
 import { PageHeader, Spinner, ErrorMsg, Empty, Modal, StatCard } from '../components/Layout'
+import ExportButtons from '../components/ExportButtons'
+
+const EXPORT_COLUMNS = [
+  { header: 'Coupon',         value: c => c.coupon_code },
+  { header: 'Type',           value: c => c.kind },
+  { header: 'Affiliate',      value: c => c.affiliate_name || '' },
+  { header: 'Rate %',         value: c => c.rate ?? '' },
+  { header: 'Orders',         value: c => Number(c.orders || 0) },
+  { header: 'Revenue',        value: c => Number(c.revenue || 0) },
+  { header: 'Subtotal',       value: c => Number(c.subtotal || 0) },
+  { header: 'Est. commission', value: c => c.est_commission != null ? Number(c.est_commission) : '' },
+  { header: 'Confirmed',      value: c => c.confirmed ? 'yes' : 'no' },
+  { header: 'First order',    value: c => c.first_order ? String(c.first_order).slice(0, 10) : '' },
+  { header: 'Last order',     value: c => c.last_order ? String(c.last_order).slice(0, 10) : '' },
+]
 
 const KIND_META = {
   affiliate:    { label: 'Affiliate',    cls: 'bg-green-100 text-green-700' },
@@ -56,6 +71,9 @@ export default function Coupons() {
       <PageHeader
         title="Coupons"
         subtitle="Real coupon usage from Zoho orders (cf_coupon_s field)"
+        actions={
+          <ExportButtons baseName="coupons" sheetName="Coupons" columns={EXPORT_COLUMNS} rows={filtered} />
+        }
       />
 
       {error && <ErrorMsg error={error} />}

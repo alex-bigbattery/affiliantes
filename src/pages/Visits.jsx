@@ -1,6 +1,16 @@
 import { useState, useEffect } from 'react'
 import { api, fmtDate } from '../api'
 import { PageHeader, Spinner, ErrorMsg, Empty } from '../components/Layout'
+import ExportButtons from '../components/ExportButtons'
+
+const EXPORT_COLUMNS = [
+  { header: 'ID',           value: v => v.visit_id },
+  { header: 'Date',         value: v => v.date },
+  { header: 'Affiliate ID', value: v => v.affiliate_id },
+  { header: 'URL',          value: v => v.url || '' },
+  { header: 'Referrer',     value: v => v.referrer || '' },
+  { header: 'Converted',    value: v => v.referral_id ? 'yes' : 'no' },
+]
 
 export default function Visits() {
   const [visits, setVisits] = useState([])
@@ -27,7 +37,9 @@ export default function Visits() {
 
   return (
     <div>
-      <PageHeader title="Visits" subtitle={`${visits.length} visits loaded`} />
+      <PageHeader title="Visits" subtitle={`${visits.length} visits loaded`}
+        actions={<ExportButtons baseName="visits" sheetName="Visits" columns={EXPORT_COLUMNS} rows={visits} />}
+      />
 
       <div className="flex flex-wrap gap-3 px-6 mb-4">
         <select className="select w-52" value={filters.affiliate_id}

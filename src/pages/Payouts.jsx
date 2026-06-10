@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { api, fmt, fmtDate } from '../api'
 import { PageHeader, Spinner, ErrorMsg, StatusBadge, Modal, Empty } from '../components/Layout'
 import { Plus, Trash2 } from 'lucide-react'
+import ExportButtons from '../components/ExportButtons'
 
 export default function Payouts() {
   const [payouts, setPayouts]     = useState([])
@@ -36,15 +37,29 @@ export default function Payouts() {
 
   const total = payouts.reduce((s, p) => s + parseFloat(p.amount || 0), 0)
 
+  const affName = id => affiliates.find(a => a.affiliate_id === id)?.display_name
+    || affiliates.find(a => a.affiliate_id === id)?.payment_email || `#${id}`
+  const exportColumns = [
+    { header: 'Payout ID', value: p => p.payout_id },
+    { header: 'Date',      value: p => p.date },
+    { header: 'Affiliate', value: p => affName(p.affiliate_id) },
+    { header: 'Amount',    value: p => Number(p.amount || 0) },
+    { header: 'Method',    value: p => p.payout_method || '' },
+    { header: 'Status',    value: p => p.status || 'paid' },
+  ]
+
   return (
     <div>
       <PageHeader
         title="Payouts"
         subtitle={`${payouts.length} payouts · Total: ${fmt(total)}`}
         actions={
-          <button className="btn-primary" onClick={() => setShowCreate(true)}>
-            <Plus size={15} /> Record payout
-          </button>
+          <>
+            <ExportButtons baseName="payouts" sheetName="Payouts" columns={exportColumns} rows={payouts} />
+            <button className="btn-primary" onClick={() => setShowCreate(true)}>
+              <Plus size={15} /> Record payout
+            </button>
+          </>
         }
       />
 

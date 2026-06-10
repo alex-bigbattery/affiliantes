@@ -2,7 +2,8 @@ import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { api, fmt, fmtDate } from '../api'
 import { PageHeader, Spinner, ErrorMsg, StatusBadge, Empty } from '../components/Layout'
-import { Filter, CheckSquare, Square, ChevronLeft, ChevronRight, Download } from 'lucide-react'
+import { Filter, CheckSquare, Square, ChevronLeft, ChevronRight } from 'lucide-react'
+import ExportButtons from '../components/ExportButtons'
 
 const STATUSES = ['all','unpaid','paid','pending','rejected']
 const PAGE_SIZE = 50
@@ -90,15 +91,18 @@ export default function Referrals() {
     } catch (e) { alert(e.message) }
   }
 
-  const exportCSV = () => {
-    const rows = [['ID','Date','Affiliate ID','Reference','Description','Amount','Status']]
-    referrals.forEach(r => rows.push([r.referral_id, r.date, r.affiliate_id, r.reference, r.description, r.amount, r.status]))
-    const csv = rows.map(r => r.map(v => `"${v ?? ''}"`).join(',')).join('\n')
-    const a = document.createElement('a')
-    a.href = 'data:text/csv,' + encodeURIComponent(csv)
-    a.download = `referrals_${new Date().toISOString().slice(0,10)}.csv`
-    a.click()
-  }
+  const exportColumns = [
+    { header: 'ID',           value: r => r.referral_id },
+    { header: 'Date',         value: r => r.date },
+    { header: 'Affiliate ID', value: r => r.affiliate_id },
+    { header: 'Affiliate',    value: r => affiliates.find(a => a.affiliate_id === r.affiliate_id)?.display_name
+                                       || affiliates.find(a => a.affiliate_id === r.affiliate_id)?.payment_email
+                                       || `#${r.affiliate_id}` },
+    { header: 'WC Reference', value: r => r.reference },
+    { header: 'Description',  value: r => r.description },
+    { header: 'Amount',       value: r => Number(r.amount || 0) },
+    { header: 'Status',       value: r => r.status },
+  ]
 
   const totalUnpaid = referrals.filter(r => r.status === 'unpaid').reduce((s, r) => s + parseFloat(r.amount || 0), 0)
 
@@ -108,9 +112,7 @@ export default function Referrals() {
         title="Referrals"
         subtitle={`${referrals.length} records loaded${totalUnpaid > 0 ? ` · ${fmt(totalUnpaid)} pending payment` : ''}`}
         actions={
-          <button className="btn-outline" onClick={exportCSV}>
-            <Download size={14} /> Export CSV
-          </button>
+          <ExportButtons baseName="referrals" sheetName="Referrals" columns={exportColumns} rows={referrals} />
         }
       />
 

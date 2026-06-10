@@ -3,6 +3,19 @@ import { Link } from 'react-router-dom'
 import { api, fmt } from '../api'
 import { PageHeader, Spinner, ErrorMsg, StatusBadge, Modal } from '../components/Layout'
 import { Search, Plus, Edit2, Trash2, Eye } from 'lucide-react'
+import ExportButtons from '../components/ExportButtons'
+
+const EXPORT_COLUMNS = [
+  { header: 'ID',            value: a => a.affiliate_id },
+  { header: 'Name',          value: a => a.display_name || a.username || '' },
+  { header: 'Payout email',  value: a => a.payment_email || '' },
+  { header: 'Rate',          value: a => a.rate },
+  { header: 'Type',          value: a => a.rate_type },
+  { header: 'Unpaid',        value: a => Number(a.unpaid_earnings || 0) },
+  { header: 'Total earnings', value: a => Number(a.earnings || 0) },
+  { header: 'Referrals',     value: a => Number(a.referrals || 0) },
+  { header: 'Status',        value: a => a.status },
+]
 
 const RATE_TYPES = ['percentage', 'flat']
 
@@ -44,9 +57,12 @@ export default function Affiliates() {
         title="Affiliates"
         subtitle={`${affiliates.length} records loaded`}
         actions={
-          <button className="btn-primary" onClick={() => setShowCreate(true)}>
-            <Plus size={15} /> New affiliate
-          </button>
+          <>
+            <ExportButtons baseName="affiliates" sheetName="Affiliates" columns={EXPORT_COLUMNS} rows={affiliates} />
+            <button className="btn-primary" onClick={() => setShowCreate(true)}>
+              <Plus size={15} /> New affiliate
+            </button>
+          </>
         }
       />
 
