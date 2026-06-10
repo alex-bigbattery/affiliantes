@@ -8,6 +8,7 @@ import ExportButtons from '../components/ExportButtons'
 
 const PAGE_SIZE = 50
 const DEFAULT_TAB = 'wc_affiliate'
+const WC_ADMIN_ORDER = 'https://bigbattery.com/wp-admin/admin.php?page=wc-orders&action=edit&id='
 
 const SEGMENTS = {
   so:               { label: 'SO orders',              short: 'Zoho B2B / quote orders (SO- prefix), no affiliate coupon' },
@@ -54,6 +55,7 @@ const EXPORT_COLUMNS = [
   { header: 'Segment',         value: o => SEGMENTS[o.segment]?.label || o.segment || '' },
   { header: 'Source',          value: o => o.affiliate_source || '' },
   { header: 'Order #',         value: o => o.salesorder_number || o.salesorder_id },
+  { header: 'WC ID',           value: o => o.wc_order_id ?? '' },
   { header: 'Date',            value: o => o.order_date ? String(o.order_date).slice(0, 10) : '' },
   { header: 'Customer',        value: o => o.customer_name || '' },
   { header: 'Coupon',          value: o => o.coupon_code || '' },
@@ -94,6 +96,20 @@ function SegmentBadge({ segment }) {
   )
 }
 
+function WcOrderId({ id }) {
+  if (!id) return <span className="text-gray-300">—</span>
+  return (
+    <a href={`${WC_ADMIN_ORDER}${id}`} target="_blank" rel="noopener noreferrer"
+      className="font-mono text-sm text-blue-600 hover:underline" title="Open in WooCommerce admin">
+      {id}
+    </a>
+  )
+}
+
+function wcCell(o) {
+  return <td className="td font-mono text-sm"><WcOrderId id={o.wc_order_id} /></td>
+}
+
 function SourceBadge({ source }) {
   if (!source) return <span className="text-gray-300">—</span>
   const label = source === 'woocommerce' ? 'WC linked' : 'Zoho only'
@@ -106,18 +122,18 @@ function SourceBadge({ source }) {
 
 function tableHeaders(tab) {
   if (tab === 'wc_affiliate') {
-    return ['Order #', 'Date', 'Customer', 'Coupon', 'Affiliate', 'AWP ID', 'Subtotal', 'Total', 'Commission', 'Status']
+    return ['Order #', 'WC ID', 'Date', 'Customer', 'Coupon', 'Affiliate', 'AWP ID', 'Subtotal', 'Total', 'Commission', 'Status']
   }
   if (tab === 'zoho_affiliate') {
-    return ['Order #', 'Date', 'Customer', 'Coupon', 'Subtotal', 'Total', 'Status']
+    return ['Order #', 'WC ID', 'Date', 'Customer', 'Coupon', 'Subtotal', 'Total', 'Status']
   }
   if (tab === 'affiliate_coupon') {
-    return ['Order #', 'Source', 'Date', 'Customer', 'Coupon', 'Affiliate', 'AWP ID', 'Subtotal', 'Total', 'Commission', 'Status']
+    return ['Order #', 'WC ID', 'Source', 'Date', 'Customer', 'Coupon', 'Affiliate', 'AWP ID', 'Subtotal', 'Total', 'Commission', 'Status']
   }
   if (tab === 'bb' || tab === 'so') {
-    return ['Order #', 'Date', 'Customer', 'Coupon', 'Subtotal', 'Total', 'Status', 'Reference']
+    return ['Order #', 'WC ID', 'Date', 'Customer', 'Coupon', 'Subtotal', 'Total', 'Status', 'Reference']
   }
-  return ['Order #', 'Type', 'Date', 'Customer', 'Coupon', 'Affiliate', 'Subtotal', 'Total', 'Commission', 'Status']
+  return ['Order #', 'WC ID', 'Type', 'Date', 'Customer', 'Coupon', 'Affiliate', 'Subtotal', 'Total', 'Commission', 'Status']
 }
 
 function OrderRow({ o, tab }) {
@@ -132,6 +148,7 @@ function OrderRow({ o, tab }) {
     return (
       <tr className={`tr-hover ${ROW_ACCENT.wc_affiliate}`}>
         <td className="td font-mono text-sm font-medium">{o.salesorder_number || o.salesorder_id}</td>
+        {wcCell(o)}
         <td className="td text-sm text-gray-600">{fmtDate(o.order_date)}</td>
         <td className="td text-sm max-w-[160px] truncate" title={o.customer_name}>{o.customer_name || '—'}</td>
         <td className="td font-mono text-sm">{o.coupon_code}</td>
@@ -149,6 +166,7 @@ function OrderRow({ o, tab }) {
     return (
       <tr className={`tr-hover ${ROW_ACCENT.zoho_affiliate}`}>
         <td className="td font-mono text-sm font-medium">{o.salesorder_number || o.salesorder_id}</td>
+        {wcCell(o)}
         <td className="td text-sm text-gray-600">{fmtDate(o.order_date)}</td>
         <td className="td text-sm max-w-[160px] truncate" title={o.customer_name}>{o.customer_name || '—'}</td>
         <td className="td font-mono text-sm">{o.coupon_code}</td>
@@ -163,6 +181,7 @@ function OrderRow({ o, tab }) {
     return (
       <tr className={`tr-hover ${accent}`}>
         <td className="td font-mono text-sm font-medium">{o.salesorder_number || o.salesorder_id}</td>
+        {wcCell(o)}
         <td className="td"><SourceBadge source={source} /></td>
         <td className="td text-sm text-gray-600">{fmtDate(o.order_date)}</td>
         <td className="td text-sm max-w-[160px] truncate" title={o.customer_name}>{o.customer_name || '—'}</td>
@@ -181,6 +200,7 @@ function OrderRow({ o, tab }) {
     return (
       <tr className={`tr-hover ${ROW_ACCENT[tab]}`}>
         <td className="td font-mono text-sm font-medium">{o.salesorder_number || o.salesorder_id}</td>
+        {wcCell(o)}
         <td className="td text-sm text-gray-600">{fmtDate(o.order_date)}</td>
         <td className="td text-sm max-w-[160px] truncate" title={o.customer_name}>{o.customer_name || '—'}</td>
         <td className="td font-mono text-sm">{o.coupon_code || <span className="text-gray-300">—</span>}</td>
@@ -195,6 +215,7 @@ function OrderRow({ o, tab }) {
   return (
     <tr className={`tr-hover ${accent}`}>
       <td className="td font-mono text-sm font-medium">{o.salesorder_number || o.salesorder_id}</td>
+      {wcCell(o)}
       <td className="td"><SegmentBadge segment={seg} /></td>
       <td className="td text-sm text-gray-600">{fmtDate(o.order_date)}</td>
       <td className="td text-sm max-w-[160px] truncate" title={o.customer_name}>{o.customer_name || '—'}</td>
@@ -254,7 +275,8 @@ export default function Orders() {
   const status   = searchParams.get('status') || ''
   const dateFrom = searchParams.get('from') || ''
   const dateTo   = searchParams.get('to') || ''
-  const tab      = searchParams.get('tab') || DEFAULT_TAB
+  const couponFilter = searchParams.get('coupon') || ''
+  const tab      = searchParams.get('tab') || (couponFilter === 'yes' ? 'wc_affiliate' : DEFAULT_TAB)
 
   const setParam = (k, v) => {
     const p = new URLSearchParams(searchParams)
@@ -274,6 +296,7 @@ export default function Orders() {
     if (dateFrom) params.date_from = dateFrom
     if (dateTo)   params.date_to = dateTo
     if (tab !== 'all') params.segment = tab
+    if (couponFilter === 'yes' || couponFilter === 'true') params.coupon = 'yes'
 
     api.orders(params)
       .then(d => setData({
@@ -283,7 +306,7 @@ export default function Orders() {
       }))
       .catch(e => setError(e.message))
       .finally(() => setLoading(false))
-  }, [search, status, dateFrom, dateTo, tab, offset])
+  }, [search, status, dateFrom, dateTo, tab, couponFilter, offset])
 
   useEffect(() => { load() }, [load])
 

@@ -2,6 +2,7 @@ import axios from 'axios'
 import { config } from 'dotenv'
 import { pool } from './db.js'
 import { runCouponMapSync } from './couponMapSync.js'
+import { runWooOrderSync } from './wooOrderSync.js'
 
 config()
 
@@ -129,6 +130,7 @@ export async function runWooSync() {
   console.log(`  🛒 WooCommerce coupon sync started (log #${logId})`)
 
   let count = 0
+  let ordersCount = 0
   let error = null
 
   try {
@@ -137,6 +139,9 @@ export async function runWooSync() {
     console.log(`    ✔ ${count} WooCommerce coupons saved to Supabase`)
     const map = await runCouponMapSync()
     console.log(`    ✔ Coupon map updated (${map.stats.mapped} coupons linked to affiliates)`)
+    const orderSync = await runWooOrderSync()
+    ordersCount = orderSync.count || 0
+    console.log(`    ✔ ${ordersCount} WooCommerce BB orders mapped (id ↔ number)`)
   } catch (e) {
     error = e.response?.data?.message || e.message || String(e)
     console.error('  ✗ WooCommerce sync error:', error)
@@ -146,13 +151,14 @@ export async function runWooSync() {
       finished_at: new Date().toISOString(),
       status: error ? 'error' : 'success',
       coupons: count,
+      orders: ordersCount,
       error,
     }
     await pool.query(`
       UPDATE wc_sync_log
-      SET finished_at=NOW(), status=$1, coupons_synced=$2, error=$3
-      WHERE id=$4
-    `, [lastWooSync.status, count, error, logId])
+      SET finished_at=NOW(), status=$1, coupons_synced=$2, orders_synced=$3, error=$4
+      WHERE id=$5
+    `, [lastWooSync.status, count, ordersCount, error, logId])
   }
 
   return lastWooSync

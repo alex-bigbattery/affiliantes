@@ -169,9 +169,28 @@ export async function initTables() {
       finished_at     TIMESTAMPTZ,
       status          TEXT DEFAULT 'running',
       coupons_synced  INTEGER DEFAULT 0,
+      orders_synced   INTEGER DEFAULT 0,
       error           TEXT
     );
+
+    -- WooCommerce order id ↔ BB order number (for wp-admin links)
+    CREATE TABLE IF NOT EXISTS wc_orders (
+      order_id        INTEGER PRIMARY KEY,
+      order_number    TEXT NOT NULL,
+      order_number_norm TEXT NOT NULL,
+      status          TEXT,
+      date_created    TIMESTAMPTZ,
+      synced_at       TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_wc_orders_number ON wc_orders(order_number_norm);
+    CREATE INDEX IF NOT EXISTS idx_wc_orders_status ON wc_orders(status);
   `)
+
+  // wc_sync_log.orders_synced added after initial deploy
+  await pool.query(`
+    ALTER TABLE wc_sync_log ADD COLUMN IF NOT EXISTS orders_synced INTEGER DEFAULT 0
+  `).catch(() => {})
   console.log('  ✔ Supabase tables ready')
   await seedCouponMap()
   await seedSettings()

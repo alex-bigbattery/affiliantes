@@ -8,6 +8,7 @@ import { fileURLToPath } from 'url'
 import { pool, initTables } from './db.js'
 import { runSync, lastSync, syncRunning } from './sync.js'
 import { runWooSync, lastWooSync, wooSyncRunning } from './wooSync.js'
+import { runWooOrderSync } from './wooOrderSync.js'
 import { runCouponMapSync } from './couponMapSync.js'
 
 config()
@@ -80,11 +81,11 @@ app.post('/api/sync/run', async (_req, res) => {
 
 app.post('/api/sync/woo/run', async (_req, res) => {
   if (wooSyncRunning) return res.json({ message: 'WooCommerce sync already running' })
-  runWooSync()
-    .then(() => runCouponMapSync().catch(console.error))
-    .catch(console.error)
-  res.json({ message: 'WooCommerce coupon sync started' })
+  runWooSync().catch(console.error)
+  res.json({ message: 'WooCommerce sync started (coupons + order IDs)' })
 })
+
+app.post('/api/sync/woo/orders/run', handle(async () => runWooOrderSync()))
 
 app.post('/api/sync/coupon-map/run', handle(async () => {
   couponCache = null
@@ -311,7 +312,9 @@ app.get('/api/orders', handle(async req => {
       OR o.coupon_code ILIKE $${vals.length}
     )`)
   }
-  if (coupon) {
+  if (coupon === 'yes' || coupon === 'true') {
+    clauses.push(`o.coupon_code IS NOT NULL`)
+  } else if (coupon) {
     vals.push(String(coupon).toLowerCase().trim())
     clauses.push(`o.coupon_code = $${vals.length}`)
   }
@@ -352,6 +355,7 @@ app.get('/api/orders', handle(async req => {
         s.total,
         s.shipping_charge,
         s.last_modified_time,
+        wo.order_id AS wc_order_id,
         NULLIF(${COUPON_EXPR}, '') AS coupon_code,
         m.affiliate_name,
         m.affiliate_id,
@@ -365,6 +369,7 @@ app.get('/api/orders', handle(async req => {
         CASE WHEN m.affiliate_id IS NOT NULL AND m.kind = 'affiliate' AND m.rate IS NOT NULL
              THEN ROUND((s.sub_total * m.rate / 100.0)::numeric, 2) END AS est_commission
       FROM sales_orders s
+      LEFT JOIN wc_orders wo ON wo.order_number_norm = UPPER(TRIM(s.salesorder_number))
       LEFT JOIN coupon_map m ON m.coupon_code = ${COUPON_EXPR}
     ),
     filtered AS (SELECT * FROM enriched o ${where})
