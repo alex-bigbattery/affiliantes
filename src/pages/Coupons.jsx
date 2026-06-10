@@ -216,7 +216,7 @@ export default function Coupons() {
         <Info size={18} className="mt-0.5 shrink-0 text-blue-500" />
         <span>
           <strong>WC + AffiliateWP</strong> — coupon exists in WooCommerce and has an owner via{' '}
-          <code>affwp_discount_affiliate</code>. Commission = Zoho subtotal × WC discount %.
+          <code>affwp_discount_affiliate</code>. Commission = Net Sales (excl. shipping) × WC discount %.
           <strong> Zoho only</strong> — code appeared on orders (<code>cf_coupon_s</code>) but is not in WooCommerce;
           no commission until classified and linked.
           <strong> WC unlinked</strong> — marked affiliate in WooCommerce but no AffiliateWP ID; revenue shows, commission does not.

@@ -278,22 +278,23 @@ app.get('/api/visits', handle(async req => {
 // SO- = Zoho B2B/quote orders · BB = web/WooCommerce orders · affiliate split by WC link
 const COUPON_EXPR = `LOWER(TRIM(s.raw_json::jsonb->'custom_field_hash'->>'cf_coupon_s'))`
 const VALID_COUPON = `NULLIF(${COUPON_EXPR}, '') IS NOT NULL AND ${COUPON_EXPR} NOT IN ('.','-','n/a','na','none')`
-const LINE_ITEMS_JSON = `COALESCE(s.raw_json::jsonb->'line_items', '[]'::jsonb)`
 const PRODUCT_LINE_FILTER = `
   COALESCE(li->>'name', '') <> 'Shipping Charge'
   AND COALESCE(li->>'line_item_type', '') <> 'service'
   AND NOT COALESCE((li->>'is_component')::boolean, false)
 `
-const NET_SALES_EXPR = `(
+const netSalesSql = (jsonRef) => `(
   SELECT COALESCE(SUM((li->>'item_total')::numeric), 0)
-  FROM jsonb_array_elements(${LINE_ITEMS_JSON}) AS li
+  FROM jsonb_array_elements(COALESCE(${jsonRef}::jsonb->'line_items', '[]'::jsonb)) AS li
   WHERE ${PRODUCT_LINE_FILTER}
 )`
-const ITEMS_SOLD_EXPR = `(
+const itemsSoldSql = (jsonRef) => `(
   SELECT COALESCE(SUM((li->>'quantity')::numeric), 0)::int
-  FROM jsonb_array_elements(${LINE_ITEMS_JSON}) AS li
+  FROM jsonb_array_elements(COALESCE(${jsonRef}::jsonb->'line_items', '[]'::jsonb)) AS li
   WHERE ${PRODUCT_LINE_FILTER}
 )`
+const NET_SALES_EXPR = netSalesSql('s.raw_json')
+const ITEMS_SOLD_EXPR = itemsSoldSql('s.raw_json')
 
 const ORDER_SEGMENT_EXPR = `
   CASE
@@ -431,7 +432,7 @@ app.get('/api/orders', handle(async req => {
           WHEN ${VALID_COUPON} AND m.kind = 'affiliate' THEN 'zoho'
         END AS affiliate_source,
         CASE WHEN m.affiliate_id IS NOT NULL AND m.kind = 'affiliate' AND m.rate IS NOT NULL
-             THEN ROUND((s.sub_total * m.rate / 100.0)::numeric, 2) END AS est_commission
+             THEN ROUND((${NET_SALES_EXPR}) * m.rate / 100.0)::numeric, 2) END AS est_commission
       FROM sales_orders s
       LEFT JOIN wc_orders wo ON wo.order_number_norm = UPPER(TRIM(s.salesorder_number))
       LEFT JOIN coupon_map m ON m.coupon_code = ${COUPON_EXPR}
@@ -604,6 +605,7 @@ app.get('/api/coupons', handle(async () => {
         COUNT(*)                                       AS orders,
         COALESCE(SUM(total), 0)                        AS revenue,
         COALESCE(SUM(sub_total), 0)                    AS subtotal,
+        COALESCE(SUM((${netSalesSql('raw_json')})::numeric), 0) AS net_sales,
         MIN(raw_json::jsonb->>'date')                  AS first_order,
         MAX(raw_json::jsonb->>'date')                  AS last_order
       FROM sales_orders
@@ -646,7 +648,7 @@ app.get('/api/coupons', handle(async () => {
         ELSE 'other'
       END AS segment,
       CASE WHEN m.affiliate_id IS NOT NULL AND m.kind = 'affiliate' AND m.rate IS NOT NULL
-           THEN ROUND((COALESCE(u.subtotal, 0) * m.rate / 100.0)::numeric, 2) END AS est_commission,
+           THEN ROUND((COALESCE(u.net_sales, 0) * m.rate / 100.0)::numeric, 2) END AS est_commission,
       (cat.coupon IS NOT NULL) AS in_woocommerce,
       (u.coupon IS NOT NULL) AS in_zoho_orders
     FROM codes c

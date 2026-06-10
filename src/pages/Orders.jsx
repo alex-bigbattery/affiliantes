@@ -586,7 +586,7 @@ export default function Orders() {
         <Info size={18} className="mt-0.5 shrink-0 text-blue-500" />
         <span>
           Orders with an affiliate coupon are classified <strong>WC-linked first</strong> (WooCommerce + AffiliateWP).
-          <strong> Affiliate Coupon</strong> = linked affiliates only — commission = subtotal × WC discount %.
+          <strong> Affiliate Coupon</strong> = linked affiliates only — commission = Net Sales (excl. shipping) × WC discount %.
           <strong> Zoho affiliate coupon</strong> = affiliate-type code on the order but not linked in WooCommerce (no commission).
           SO/BB tabs exclude affiliate-coupon orders.
           La API REST no crea el <strong>referral</strong> en AffiliateWP — usa <strong>Abrir WC</strong> y pulsa Update,

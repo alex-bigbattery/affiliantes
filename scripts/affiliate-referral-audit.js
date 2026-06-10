@@ -6,6 +6,13 @@ config()
 
 const COUPON = `LOWER(TRIM(s.raw_json::jsonb->'custom_field_hash'->>'cf_coupon_s'))`
 const VALID = `NULLIF(${COUPON}, '') IS NOT NULL AND ${COUPON} NOT IN ('.','-','n/a','na','none')`
+const NET_SALES = `(
+  SELECT COALESCE(SUM((li->>'item_total')::numeric), 0)
+  FROM jsonb_array_elements(COALESCE(s.raw_json::jsonb->'line_items', '[]'::jsonb)) AS li
+  WHERE COALESCE(li->>'name', '') <> 'Shipping Charge'
+    AND COALESCE(li->>'line_item_type', '') <> 'service'
+    AND NOT COALESCE((li->>'is_component')::boolean, false)
+)`
 
 const AUTH = Buffer.from(`${process.env.AFFWP_PUBLIC_KEY}:${process.env.AFFWP_TOKEN}`).toString('base64')
 const AWP = 'https://bigbattery.com/wp-json/affwp/v1'
@@ -103,7 +110,7 @@ const { rows: orders } = await pool.query(`
     m.affiliate_id,
     m.rate AS coupon_rate,
     wo.order_id AS wc_order_id,
-    ROUND((s.sub_total * m.rate / 100.0)::numeric, 2) AS est_commission
+    ROUND((${NET_SALES}) * m.rate / 100.0)::numeric, 2) AS est_commission
   FROM sales_orders s
   JOIN wc_orders wo ON wo.order_number_norm = UPPER(TRIM(s.salesorder_number))
   LEFT JOIN coupon_map m ON m.coupon_code = ${COUPON}
