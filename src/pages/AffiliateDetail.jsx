@@ -84,7 +84,7 @@ export default function AffiliateDetail() {
         </div>
 
         {tab === 'referrals' && (
-          <div className="card overflow-hidden mb-8">
+          <div className="card overflow-x-auto mb-8">
             <table className="w-full">
               <thead>
                 <tr className="border-b">
@@ -141,7 +141,7 @@ export default function AffiliateDetail() {
         )}
 
         {tab === 'payouts' && (
-          <div className="card overflow-hidden mb-8">
+          <div className="card overflow-x-auto mb-8">
             <table className="w-full">
               <thead>
                 <tr className="border-b">

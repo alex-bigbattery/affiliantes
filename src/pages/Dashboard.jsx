@@ -49,7 +49,7 @@ export default function Dashboard() {
       />
 
       {/* Stats */}
-      <div className="grid grid-cols-4 gap-4 px-6 mb-6">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 px-4 sm:px-6 mb-6">
         <StatCard label="Active affiliates" value={aff.active}
           sub={`${aff.total} total`} />
         <StatCard label="Pending commissions" value={fmt(aff.total_unpaid)}
@@ -61,9 +61,9 @@ export default function Dashboard() {
       </div>
 
       {/* Charts */}
-      <div className="grid grid-cols-5 gap-4 px-6 mb-6">
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 px-4 sm:px-6 mb-6">
         {/* Bar chart */}
-        <div className="card col-span-3 p-4">
+        <div className="card lg:col-span-3 p-4">
           <div className="text-sm font-semibold text-gray-700 mb-3">Commissions by month (last 12)</div>
           <ResponsiveContainer width="100%" height={220}>
             <BarChart data={monthlyData} margin={{ top: 0, right: 8, left: 0, bottom: 0 }}>
@@ -78,7 +78,7 @@ export default function Dashboard() {
         </div>
 
         {/* Pie chart */}
-        <div className="card col-span-2 p-4">
+        <div className="card lg:col-span-2 p-4">
           <div className="text-sm font-semibold text-gray-700 mb-3">Top affiliates by total commission</div>
           <ResponsiveContainer width="100%" height={220}>
             <PieChart>
@@ -92,7 +92,7 @@ export default function Dashboard() {
       </div>
 
       {/* Referral status summary */}
-      <div className="grid grid-cols-4 gap-4 px-6 mb-6">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 px-4 sm:px-6 mb-6">
         {[
           { label: 'Paid',     val: ref.paid,     cls: 'text-green-700' },
           { label: 'Unpaid',   val: ref.unpaid,   cls: 'text-red-600' },
@@ -110,7 +110,7 @@ export default function Dashboard() {
       </div>
 
       {/* Unpaid referrals quick list */}
-      <div className="px-6 pb-8">
+      <div className="px-4 sm:px-6 pb-8">
         <div className="card">
           <div className="flex items-center justify-between px-4 py-3 border-b">
             <div className="flex items-center gap-2 text-sm font-semibold text-gray-700">
@@ -121,6 +121,7 @@ export default function Dashboard() {
               View all <ArrowRight size={12} />
             </Link>
           </div>
+          <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
               <tr>
@@ -145,6 +146,7 @@ export default function Dashboard() {
               }
             </tbody>
           </table>
+          </div>
         </div>
       </div>
     </div>

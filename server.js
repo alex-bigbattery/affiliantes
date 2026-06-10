@@ -17,10 +17,18 @@ const SYNC_MS = (parseInt(process.env.SYNC_INTERVAL_MINUTES) || 30) * 60 * 1000
 const BASE = 'https://bigbattery.com/wp-json/affwp/v1'
 const AUTH = Buffer.from(`${process.env.AFFWP_PUBLIC_KEY}:${process.env.AFFWP_TOKEN}`).toString('base64')
 
-// CORS: in production set ALLOWED_ORIGINS to your Vercel URL(s) (comma-separated).
-// Empty = allow all (local dev).
-const ALLOWED = (process.env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean)
-app.use(cors(ALLOWED.length ? { origin: ALLOWED } : {}))
+// CORS: allow configured origins (ALLOWED_ORIGINS, comma-separated), any
+// *.vercel.app deploy, and non-browser requests. Empty config = allow all.
+const ALLOWED = (process.env.ALLOWED_ORIGINS || '')
+  .split(',').map(s => s.trim().replace(/\/+$/, '')).filter(Boolean)
+app.use(cors({
+  origin(origin, cb) {
+    if (!origin) return cb(null, true)                  // curl / server-to-server
+    const o = origin.replace(/\/+$/, '')
+    if (!ALLOWED.length || ALLOWED.includes(o) || /\.vercel\.app$/i.test(o)) return cb(null, true)
+    return cb(null, false)
+  },
+}))
 app.use(express.json())
 
 // Health check (used by Render)

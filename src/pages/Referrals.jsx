@@ -178,7 +178,7 @@ export default function Referrals() {
       {error && <ErrorMsg error={error} />}
 
       <div className="px-6 pb-8">
-        <div className="card overflow-hidden">
+        <div className="card overflow-x-auto">
           <table className="w-full">
             <thead>
               <tr className="border-b">

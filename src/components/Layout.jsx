@@ -2,7 +2,7 @@ import { NavLink } from 'react-router-dom'
 import { useEffect, useState } from 'react'
 import {
   LayoutDashboard, Users, ArrowLeftRight, DollarSign,
-  Eye, Tag, Image, RefreshCw, Zap, Database
+  Eye, Tag, Image, RefreshCw, Zap, Database, Menu, X
 } from 'lucide-react'
 import { api } from '../api'
 
@@ -60,17 +60,30 @@ function SyncFooter() {
 }
 
 export default function Layout({ children }) {
+  const [open, setOpen] = useState(false)
+  const close = () => setOpen(false)
+
   return (
     <div className="flex h-screen overflow-hidden">
-      {/* Sidebar */}
-      <aside className="flex flex-col w-56 bg-navy-700 shrink-0">
+      {/* Mobile backdrop */}
+      {open && <div className="fixed inset-0 z-30 bg-black/40 md:hidden" onClick={close} />}
+
+      {/* Sidebar — slide-out drawer on mobile, static on md+ */}
+      <aside className={`fixed md:static inset-y-0 left-0 z-40 w-56 bg-navy-700 shrink-0 flex flex-col
+        transform transition-transform duration-200
+        ${open ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0`}>
         {/* Logo */}
-        <div className="flex items-center gap-2 px-5 py-5 border-b border-navy-500/40">
-          <Zap className="text-brand-orange" size={22} />
-          <div>
-            <div className="text-white font-bold text-sm leading-none">BigBattery</div>
-            <div className="text-navy-100/60 text-xs mt-0.5">Affiliate Dashboard</div>
+        <div className="flex items-center justify-between px-5 py-5 border-b border-navy-500/40">
+          <div className="flex items-center gap-2">
+            <Zap className="text-brand-orange" size={22} />
+            <div>
+              <div className="text-white font-bold text-sm leading-none">BigBattery</div>
+              <div className="text-navy-100/60 text-xs mt-0.5">Affiliate Dashboard</div>
+            </div>
           </div>
+          <button className="md:hidden text-navy-100/60 hover:text-white" onClick={close} aria-label="Close menu">
+            <X size={18} />
+          </button>
         </div>
 
         {/* Nav */}
@@ -80,6 +93,7 @@ export default function Layout({ children }) {
               key={to}
               to={to}
               end={to === '/'}
+              onClick={close}
               className={({ isActive }) =>
                 `flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
                   isActive
@@ -97,22 +111,33 @@ export default function Layout({ children }) {
         <SyncFooter />
       </aside>
 
-      {/* Main */}
-      <main className="flex-1 overflow-y-auto">
-        {children}
-      </main>
+      {/* Main column */}
+      <div className="flex-1 flex flex-col overflow-hidden">
+        {/* Mobile top bar with hamburger */}
+        <header className="md:hidden flex items-center gap-3 px-4 py-3 border-b bg-white shrink-0">
+          <button onClick={() => setOpen(true)} className="text-gray-600" aria-label="Open menu">
+            <Menu size={22} />
+          </button>
+          <Zap className="text-brand-orange" size={18} />
+          <span className="font-bold text-navy-700 text-sm">BigBattery</span>
+        </header>
+
+        <main className="flex-1 overflow-y-auto">
+          {children}
+        </main>
+      </div>
     </div>
   )
 }
 
 export function PageHeader({ title, subtitle, actions }) {
   return (
-    <div className="flex items-start justify-between px-6 pt-6 pb-4">
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between px-4 sm:px-6 pt-5 sm:pt-6 pb-4">
       <div>
-        <h1 className="text-xl font-bold text-gray-900">{title}</h1>
+        <h1 className="text-lg sm:text-xl font-bold text-gray-900">{title}</h1>
         {subtitle && <p className="text-sm text-gray-500 mt-0.5">{subtitle}</p>}
       </div>
-      {actions && <div className="flex items-center gap-2">{actions}</div>}
+      {actions && <div className="flex items-center gap-2 flex-wrap">{actions}</div>}
     </div>
   )
 }
