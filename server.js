@@ -278,6 +278,7 @@ app.get('/api/visits', handle(async req => {
 // SO- = Zoho B2B/quote orders · BB = web/WooCommerce orders · affiliate split by WC link
 const COUPON_EXPR = `LOWER(TRIM(s.raw_json::jsonb->'custom_field_hash'->>'cf_coupon_s'))`
 const VALID_COUPON = `NULLIF(${COUPON_EXPR}, '') IS NOT NULL AND ${COUPON_EXPR} NOT IN ('.','-','n/a','na','none')`
+const LINE_ITEMS_JSON = `COALESCE(s.raw_json::jsonb->'line_items', '[]'::jsonb)`
 const PRODUCT_LINE_FILTER = `
   COALESCE(li->>'name', '') <> 'Shipping Charge'
   AND COALESCE(li->>'line_item_type', '') <> 'service'
