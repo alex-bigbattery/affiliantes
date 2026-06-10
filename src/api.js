@@ -48,6 +48,7 @@ export const api = {
 
   // Orders (Zoho sales_orders)
   orders: (p) => get('/orders', p),
+  orderStatuses: () => get('/orders/statuses'),
   ordersWcIds: (p) => get('/orders/wc-ids', p),
   wcBulkUpdate: (d) => post('/orders/wc-bulk-update', d),
   wcUpdateOrder: (id) => post(`/orders/wc-update/${id}`),

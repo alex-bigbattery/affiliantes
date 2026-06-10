@@ -291,6 +291,16 @@ const ORDER_SEGMENT_EXPR = `
   END
 `
 
+app.get('/api/orders/statuses', handle(async () => {
+  const { rows } = await pool.query(`
+    SELECT DISTINCT status
+    FROM sales_orders
+    WHERE status IS NOT NULL AND TRIM(status) <> ''
+    ORDER BY status
+  `)
+  return rows.map(r => r.status)
+}))
+
 app.get('/api/orders', handle(async req => {
   const {
     number = 50, offset = 0, search, status, coupon, segment,

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Search, ChevronLeft, ChevronRight, Info, RefreshCw } from 'lucide-react'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts'
@@ -61,8 +61,8 @@ const EXPORT_COLUMNS = [
   { header: 'Coupon',          value: o => o.coupon_code || '' },
   { header: 'Affiliate',       value: o => o.affiliate_name || '' },
   { header: 'AWP ID',          value: o => o.affiliate_id ?? '' },
-  { header: 'Subtotal',        value: o => Number(o.sub_total || 0) },
-  { header: 'Total',           value: o => Number(o.total || 0) },
+  { header: 'Net',             value: o => Number(o.sub_total || 0) },
+  { header: 'Revenue',         value: o => Number(o.total || 0) },
   { header: 'Est. commission', value: o => o.est_commission != null ? Number(o.est_commission) : '' },
   { header: 'Status',          value: o => o.status || '' },
   { header: 'Reference',       value: o => o.reference_number || '' },
@@ -144,6 +144,98 @@ function WcUpdateCell({ o }) {
   )
 }
 
+const MONEY_HEADERS = ['Net', 'Revenue', 'Commission']
+
+function affiliateLabel(a) {
+  return `#${a.affiliate_id} — ${a.display_name || a.username || a.payment_email || `user ${a.user_id}`}`
+}
+
+function SearchableAffiliateSelect({ affiliates, value, onChange }) {
+  const [open, setOpen] = useState(false)
+  const [q, setQ] = useState('')
+  const wrapRef = useRef(null)
+
+  const selected = affiliates.find(a => String(a.affiliate_id) === value)
+  const display = selected ? affiliateLabel(selected) : ''
+
+  const filtered = useMemo(() => {
+    const qq = q.trim().toLowerCase()
+    if (!qq) return affiliates
+    return affiliates.filter(a =>
+      String(a.affiliate_id).includes(qq)
+      || (a.display_name || '').toLowerCase().includes(qq)
+      || (a.username || '').toLowerCase().includes(qq)
+      || (a.payment_email || '').toLowerCase().includes(qq))
+  }, [affiliates, q])
+
+  useEffect(() => {
+    const close = (e) => { if (!wrapRef.current?.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [])
+
+  useEffect(() => {
+    if (!open) setQ(selected ? display : '')
+  }, [value, open, display, selected])
+
+  const pick = (id) => {
+    onChange(id ? String(id) : '')
+    setOpen(false)
+    setQ('')
+  }
+
+  return (
+    <div ref={wrapRef} className="relative w-64">
+      <div className="relative">
+        <Search size={15} className="absolute left-2.5 top-2.5 text-gray-400 pointer-events-none" />
+        <input
+          className="input pl-8 pr-8 w-full"
+          placeholder="Search affiliate…"
+          value={open ? q : display}
+          onChange={e => { setQ(e.target.value); setOpen(true) }}
+          onFocus={() => { setOpen(true); setQ(display) }}
+        />
+        {value && (
+          <button type="button" className="absolute right-2 top-2 text-gray-400 hover:text-gray-600 text-xs"
+            onClick={() => pick('')} title="Clear">✕</button>
+        )}
+      </div>
+      {open && (
+        <ul className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-md border border-gray-200 bg-white py-1 shadow-lg text-sm">
+          <li>
+            <button type="button" className="w-full px-3 py-1.5 text-left hover:bg-gray-50 text-gray-500"
+              onClick={() => pick('')}>All affiliates</button>
+          </li>
+          {filtered.length === 0
+            ? <li className="px-3 py-2 text-gray-400">No matches</li>
+            : filtered.map(a => (
+              <li key={a.affiliate_id}>
+                <button type="button"
+                  className={`w-full px-3 py-1.5 text-left hover:bg-gray-50 truncate ${String(a.affiliate_id) === value ? 'bg-navy-50 text-navy-800' : ''}`}
+                  onClick={() => pick(a.affiliate_id)}>
+                  {affiliateLabel(a)}
+                </button>
+              </li>
+            ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+function MoneyCells({ o, showCommission = false }) {
+  const commission = o.est_commission != null
+    ? <span className="font-semibold text-brand-orange">{fmt(o.est_commission)}</span>
+    : <span className="text-gray-300">—</span>
+  return (
+    <>
+      <td className="td text-right text-sm">{fmt(o.sub_total)}</td>
+      <td className="td text-right text-sm font-medium">{fmt(o.total)}</td>
+      {showCommission && <td className="td text-right text-sm">{commission}</td>}
+    </>
+  )
+}
+
 function SourceBadge({ source }) {
   if (!source) return <span className="text-gray-300">—</span>
   const label = source === 'woocommerce' ? 'WC linked' : 'Zoho only'
@@ -157,27 +249,24 @@ function SourceBadge({ source }) {
 function tableHeaders(tab) {
   const updateCol = 'WC Admin'
   if (tab === 'wc_affiliate') {
-    return ['Order #', 'WC ID', 'Date', 'Customer', 'Coupon', 'Affiliate', 'AWP ID', 'Subtotal', 'Total', 'Commission', 'Status', updateCol]
+    return ['Order #', 'WC ID', 'Date', 'Customer', 'Coupon', 'Affiliate', 'AWP ID', ...MONEY_HEADERS, 'Status', updateCol]
   }
   if (tab === 'zoho_affiliate') {
-    return ['Order #', 'WC ID', 'Date', 'Customer', 'Coupon', 'Affiliate', 'AWP ID', 'Subtotal', 'Total', 'Status', updateCol]
+    return ['Order #', 'WC ID', 'Date', 'Customer', 'Coupon', 'Affiliate', 'AWP ID', 'Net', 'Revenue', 'Status', updateCol]
   }
   if (tab === 'affiliate_coupon') {
-    return ['Order #', 'WC ID', 'Source', 'Date', 'Customer', 'Coupon', 'Affiliate', 'AWP ID', 'Subtotal', 'Total', 'Commission', 'Status', updateCol]
+    return ['Order #', 'WC ID', 'Source', 'Date', 'Customer', 'Coupon', 'Affiliate', 'AWP ID', ...MONEY_HEADERS, 'Status', updateCol]
   }
   if (tab === 'bb' || tab === 'so') {
-    return ['Order #', 'WC ID', 'Date', 'Customer', 'Coupon', 'Affiliate', 'Subtotal', 'Total', 'Status', 'Reference', updateCol]
+    return ['Order #', 'WC ID', 'Date', 'Customer', 'Coupon', 'Affiliate', 'Net', 'Revenue', 'Status', 'Reference', updateCol]
   }
-  return ['Order #', 'WC ID', 'Type', 'Date', 'Customer', 'Coupon', 'Affiliate', 'Subtotal', 'Total', 'Commission', 'Status', updateCol]
+  return ['Order #', 'WC ID', 'Type', 'Date', 'Customer', 'Coupon', 'Affiliate', ...MONEY_HEADERS, 'Status', updateCol]
 }
 
 function OrderRow({ o, tab }) {
   const seg = inferSegment(o)
   const source = inferSource(o)
   const accent = ROW_ACCENT[seg] || ROW_ACCENT.other
-  const commission = o.est_commission != null
-    ? <span className="font-semibold text-brand-orange">{fmt(o.est_commission)}</span>
-    : <span className="text-gray-300">—</span>
 
   if (tab === 'wc_affiliate') {
     return (
@@ -188,9 +277,7 @@ function OrderRow({ o, tab }) {
         <td className="td text-sm max-w-[160px] truncate" title={o.customer_name}>{o.customer_name || '—'}</td>
         <td className="td font-mono text-sm">{o.coupon_code}</td>
         <AffiliateCell o={o} showId />
-        <td className="td text-right text-sm">{fmt(o.sub_total)}</td>
-        <td className="td text-right text-sm font-medium">{fmt(o.total)}</td>
-        <td className="td text-right text-sm">{commission}</td>
+        <MoneyCells o={o} showCommission />
         <td className="td text-sm capitalize text-gray-600">{o.status || '—'}</td>
         <WcUpdateCell o={o} />
       </tr>
@@ -206,8 +293,7 @@ function OrderRow({ o, tab }) {
         <td className="td text-sm max-w-[160px] truncate" title={o.customer_name}>{o.customer_name || '—'}</td>
         <td className="td font-mono text-sm">{o.coupon_code}</td>
         <AffiliateCell o={o} showId />
-        <td className="td text-right text-sm">{fmt(o.sub_total)}</td>
-        <td className="td text-right text-sm font-medium">{fmt(o.total)}</td>
+        <MoneyCells o={o} />
         <td className="td text-sm capitalize text-gray-600">{o.status || '—'}</td>
         <WcUpdateCell o={o} />
       </tr>
@@ -224,9 +310,7 @@ function OrderRow({ o, tab }) {
         <td className="td text-sm max-w-[160px] truncate" title={o.customer_name}>{o.customer_name || '—'}</td>
         <td className="td font-mono text-sm">{o.coupon_code}</td>
         <AffiliateCell o={o} showId />
-        <td className="td text-right text-sm">{fmt(o.sub_total)}</td>
-        <td className="td text-right text-sm font-medium">{fmt(o.total)}</td>
-        <td className="td text-right text-sm">{commission}</td>
+        <MoneyCells o={o} showCommission />
         <td className="td text-sm capitalize text-gray-600">{o.status || '—'}</td>
         <WcUpdateCell o={o} />
       </tr>
@@ -242,8 +326,7 @@ function OrderRow({ o, tab }) {
         <td className="td text-sm max-w-[160px] truncate" title={o.customer_name}>{o.customer_name || '—'}</td>
         <td className="td font-mono text-sm">{o.coupon_code || <span className="text-gray-300">—</span>}</td>
         <AffiliateCell o={o} />
-        <td className="td text-right text-sm">{fmt(o.sub_total)}</td>
-        <td className="td text-right text-sm font-medium">{fmt(o.total)}</td>
+        <MoneyCells o={o} />
         <td className="td text-sm capitalize text-gray-600">{o.status || '—'}</td>
         <td className="td text-xs text-gray-500 font-mono">{o.reference_number || '—'}</td>
         <WcUpdateCell o={o} />
@@ -260,9 +343,7 @@ function OrderRow({ o, tab }) {
       <td className="td text-sm max-w-[160px] truncate" title={o.customer_name}>{o.customer_name || '—'}</td>
       <td className="td font-mono text-sm">{o.coupon_code || <span className="text-gray-300">—</span>}</td>
       <AffiliateCell o={o} />
-      <td className="td text-right text-sm">{fmt(o.sub_total)}</td>
-      <td className="td text-right text-sm font-medium">{fmt(o.total)}</td>
-      <td className="td text-right text-sm">{commission}</td>
+      <MoneyCells o={o} showCommission />
       <td className="td text-sm capitalize text-gray-600">{o.status || '—'}</td>
       <WcUpdateCell o={o} />
     </tr>
@@ -308,6 +389,7 @@ export default function Orders() {
   const [searchParams, setSearchParams] = useSearchParams()
   const [data, setData]       = useState({ items: [], total: 0, summary: null })
   const [affiliates, setAffiliates] = useState([])
+  const [statuses, setStatuses] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError]     = useState(null)
   const [offset, setOffset]   = useState(0)
@@ -354,7 +436,14 @@ export default function Orders() {
 
   useEffect(() => {
     api.affiliates({ number: 500 }).then(d => setAffiliates(Array.isArray(d) ? d : [])).catch(() => {})
+    api.orderStatuses().then(d => setStatuses(Array.isArray(d) ? d : [])).catch(() => {})
   }, [])
+
+  const selectedAffiliate = useMemo(
+    () => affiliates.find(a => String(a.affiliate_id) === affiliateId),
+    [affiliates, affiliateId],
+  )
+  const showCommissionTab = tab === 'wc_affiliate' || tab === 'affiliate_coupon' || tab === 'all'
 
   const showWcBulk = tab === 'wc_affiliate' || tab === 'affiliate_coupon'
 
@@ -507,23 +596,37 @@ export default function Orders() {
         </p>
       )}
 
+      {affiliateId && s && (
+        <div className="mx-6 mb-4">
+          <p className="text-sm font-semibold text-gray-700 mb-2">
+            Totals — {selectedAffiliate ? affiliateLabel(selectedAffiliate) : `Affiliate #${affiliateId}`}
+          </p>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <StatCard label="Orders" value={s.filtered_orders?.toLocaleString()} color="text-navy-700" />
+            <StatCard label="Net" value={fmt(s.total_subtotal)} sub="subtotal" color="text-slate-700" />
+            <StatCard label="Revenue" value={fmt(s.total_revenue)} sub="order total" color="text-blue-600" />
+            {showCommissionTab && (
+              <StatCard label="Est. commission" value={fmt(s.est_commission)} color="text-brand-orange" />
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="px-6 mb-4 flex flex-wrap items-end gap-3">
         <label className="block">
           <span className="text-xs text-gray-500 mb-1 block">Affiliate</span>
-          <select className="select w-56" value={affiliateId}
-            onChange={e => setParam('affiliate', e.target.value)}>
-            <option value="">All affiliates</option>
-            {affiliates.map(a => (
-              <option key={a.affiliate_id} value={a.affiliate_id}>
-                #{a.affiliate_id} — {a.display_name || a.username || a.payment_email || `user ${a.user_id}`}
-              </option>
-            ))}
-          </select>
+          <SearchableAffiliateSelect affiliates={affiliates} value={affiliateId}
+            onChange={v => setParam('affiliate', v)} />
         </label>
         <label className="block">
           <span className="text-xs text-gray-500 mb-1 block">Status</span>
-          <input className="input w-32" placeholder="e.g. closed" value={status}
-            onChange={e => setParam('status', e.target.value)} />
+          <select className="select w-40" value={status}
+            onChange={e => setParam('status', e.target.value)}>
+            <option value="">All statuses</option>
+            {statuses.map(st => (
+              <option key={st} value={st}>{st}</option>
+            ))}
+          </select>
         </label>
         <label className="block">
           <span className="text-xs text-gray-500 mb-1 block">From</span>
@@ -544,7 +647,7 @@ export default function Orders() {
               <tr className="border-b">
                 {headers.map((h, i) => (
                   <th key={i} className={`th ${
-                    ['Subtotal', 'Total', 'Commission'].includes(h) ? 'text-right' : h === 'WC Admin' ? 'text-center' : ''}`}>{h}</th>
+                    MONEY_HEADERS.includes(h) ? 'text-right' : h === 'WC Admin' ? 'text-center' : ''}`}>{h}</th>
                 ))}
               </tr>
             </thead>
