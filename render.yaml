@@ -33,3 +33,10 @@ services:
       # Your Vercel frontend URL(s), comma-separated — set after deploying frontend:
       - key: ALLOWED_ORIGINS
         sync: false
+      # WooCommerce REST API — coupons catalog sync to Supabase:
+      - key: WOO_STORE_URL
+        value: "https://bigbattery.com"
+      - key: WOO_CONSUMER_KEY
+        sync: false
+      - key: WOO_CONSUMER_SECRET
+        sync: false

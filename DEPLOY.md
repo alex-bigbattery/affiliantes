@@ -45,8 +45,16 @@ gh repo create bigbattery-affiliate-dashboard --private --source=. --remote=orig
    | `AFFWP_TOKEN` | AffiliateWP token |
    | `AFFWP_SECRET_KEY` | AffiliateWP secret key |
    | `ALLOWED_ORIGINS` | *(leave blank for now — fill in step 4)* |
+   | `WOO_CONSUMER_KEY` | WooCommerce REST consumer key (`ck_...`) |
+   | `WOO_CONSUMER_SECRET` | WooCommerce REST consumer secret (`cs_...`) |
 
-   `SUPABASE_URL`, `SYNC_INTERVAL_MINUTES`, `NODE_VERSION` come from `render.yaml`.
+   `SUPABASE_URL`, `SYNC_INTERVAL_MINUTES`, `WOO_STORE_URL`, `NODE_VERSION` come from `render.yaml`.
+
+   **Quick setup (local):** with `RENDER_API_KEY` from [Render API keys](https://dashboard.render.com/u/settings#api-keys) and Woo keys in `.env`:
+   ```powershell
+   $env:RENDER_API_KEY = "rnd_..."
+   npm run configure:render-woo
+   ```
 3. Deploy. Confirm health: `https://<service>.onrender.com/api/health` → `{"ok":true}`.
 4. Copy the service URL, e.g. `https://affiliate-dashboard-api.onrender.com`.
 
