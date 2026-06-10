@@ -10,7 +10,9 @@
     "start": "NODE_ENV=production node server.js",
     "sync:woo": "node scripts/sync-woo-coupons.js",
     "configure:render-woo": "node scripts/configure-render-woo-env.js",
-    "sync:coupon-map": "node scripts/sync-coupon-map.js"
+    "sync:coupon-map": "node scripts/sync-coupon-map.js",
+    "wc:update-affiliate": "node scripts/bulk-wc-order-update.js",
+    "wc:admin-update": "node scripts/wc-admin-bulk-update.js"
   },
   "dependencies": {
     "axios": "^1.7.2",

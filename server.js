@@ -9,6 +9,7 @@ import { pool, initTables } from './db.js'
 import { runSync, lastSync, syncRunning } from './sync.js'
 import { runWooSync, lastWooSync, wooSyncRunning } from './wooSync.js'
 import { runWooOrderSync } from './wooOrderSync.js'
+import { refreshWcOrder, refreshWcOrdersBulk, wooConfigured as wooUpdateConfigured } from './wooOrderUpdate.js'
 import { runCouponMapSync } from './couponMapSync.js'
 
 config()
@@ -432,6 +433,73 @@ app.get('/api/orders', handle(async req => {
     },
     source: 'zoho_sales_orders',
   }
+}))
+
+// WC order IDs for affiliate-coupon orders (bulk Update in WooCommerce admin)
+app.get('/api/orders/wc-ids', handle(async req => {
+  const { segment = 'wc_affiliate' } = req.query
+  let segmentClause = ''
+  if (segment === 'wc_affiliate') {
+    segmentClause = `AND ${VALID_COUPON} AND m.affiliate_id IS NOT NULL AND m.kind = 'affiliate'`
+  } else if (segment === 'affiliate_coupon') {
+    segmentClause = `AND ${VALID_COUPON} AND m.kind = 'affiliate'`
+  } else if (segment === 'bb') {
+    segmentClause = `AND s.salesorder_number ILIKE 'BB%'`
+  }
+
+  const { rows } = await pool.query(`
+    SELECT DISTINCT wo.order_id AS wc_order_id, s.salesorder_number,
+      NULLIF(${COUPON_EXPR}, '') AS coupon_code
+    FROM sales_orders s
+    JOIN wc_orders wo ON wo.order_number_norm = UPPER(TRIM(s.salesorder_number))
+    LEFT JOIN coupon_map m ON m.coupon_code = ${COUPON_EXPR}
+    WHERE wo.order_id IS NOT NULL ${segmentClause}
+    ORDER BY wo.order_id DESC
+  `)
+
+  return {
+    ids: rows.map(r => r.wc_order_id),
+    items: rows,
+    total: rows.length,
+  }
+}))
+
+// Re-save WC orders (same effect as opening wp-admin edit page and clicking Update)
+app.post('/api/orders/wc-bulk-update', handle(async req => {
+  if (!wooUpdateConfigured()) {
+    throw new Error('WooCommerce API credentials not configured on server')
+  }
+
+  let ids = Array.isArray(req.body?.ids) ? req.body.ids.map(Number).filter(Boolean) : []
+  if (!ids.length && req.body?.segment) {
+    const list = await pool.query(`
+      SELECT DISTINCT wo.order_id AS wc_order_id
+      FROM sales_orders s
+      JOIN wc_orders wo ON wo.order_number_norm = UPPER(TRIM(s.salesorder_number))
+      LEFT JOIN coupon_map m ON m.coupon_code = ${COUPON_EXPR}
+      WHERE wo.order_id IS NOT NULL
+        AND ${VALID_COUPON} AND m.affiliate_id IS NOT NULL AND m.kind = 'affiliate'
+      ORDER BY wo.order_id DESC
+      LIMIT $1
+    `, [Math.min(parseInt(req.body.limit, 10) || 500, 500)])
+    ids = list.rows.map(r => r.wc_order_id)
+  }
+
+  if (!ids.length) return { ok: [], failed: [], message: 'No WooCommerce order IDs to update' }
+  if (ids.length > 25) {
+    throw new Error('Send at most 25 order IDs per request — call in batches from the UI')
+  }
+
+  return refreshWcOrdersBulk(ids)
+}))
+
+app.post('/api/orders/wc-update/:id', handle(async req => {
+  if (!wooUpdateConfigured()) {
+    throw new Error('WooCommerce API credentials not configured on server')
+  }
+  const id = parseInt(req.params.id, 10)
+  if (!id) throw new Error('Invalid WC order ID')
+  return refreshWcOrder(id)
 }))
 
 // ── COUPONS / CREATIVES (live proxy — graceful on "not available"/"empty") ──

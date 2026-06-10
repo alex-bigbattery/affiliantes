@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Search, ChevronLeft, ChevronRight, Info } from 'lucide-react'
+import { Search, ChevronLeft, ChevronRight, Info, RefreshCw } from 'lucide-react'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts'
 import { api, fmt, fmtDate } from '../api'
 import { PageHeader, Spinner, ErrorMsg, Empty, StatCard } from '../components/Layout'
@@ -106,8 +106,21 @@ function WcOrderId({ id }) {
   )
 }
 
-function wcCell(o) {
-  return <td className="td font-mono text-sm"><WcOrderId id={o.wc_order_id} /></td>
+function WcIdCell({ o, onUpdate, updatingId }) {
+  return (
+    <td className="td font-mono text-sm">
+      <div className="flex items-center gap-1">
+        <WcOrderId id={o.wc_order_id} />
+        {o.wc_order_id && onUpdate && (
+          <button type="button" onClick={() => onUpdate(o.wc_order_id)} disabled={updatingId === o.wc_order_id}
+            className="btn-ghost px-1 py-0.5 text-gray-400 hover:text-navy-700 disabled:opacity-40"
+            title="Update in WooCommerce (same as wp-admin Update button)">
+            <RefreshCw size={13} className={updatingId === o.wc_order_id ? 'animate-spin' : ''} />
+          </button>
+        )}
+      </div>
+    </td>
+  )
 }
 
 function SourceBadge({ source }) {
@@ -136,7 +149,7 @@ function tableHeaders(tab) {
   return ['Order #', 'WC ID', 'Type', 'Date', 'Customer', 'Coupon', 'Affiliate', 'Subtotal', 'Total', 'Commission', 'Status']
 }
 
-function OrderRow({ o, tab }) {
+function OrderRow({ o, tab, onWcUpdate, updatingWcId }) {
   const seg = inferSegment(o)
   const source = inferSource(o)
   const accent = ROW_ACCENT[seg] || ROW_ACCENT.other
@@ -148,7 +161,7 @@ function OrderRow({ o, tab }) {
     return (
       <tr className={`tr-hover ${ROW_ACCENT.wc_affiliate}`}>
         <td className="td font-mono text-sm font-medium">{o.salesorder_number || o.salesorder_id}</td>
-        {wcCell(o)}
+        <WcIdCell o={o} onUpdate={onWcUpdate} updatingId={updatingWcId} />
         <td className="td text-sm text-gray-600">{fmtDate(o.order_date)}</td>
         <td className="td text-sm max-w-[160px] truncate" title={o.customer_name}>{o.customer_name || '—'}</td>
         <td className="td font-mono text-sm">{o.coupon_code}</td>
@@ -166,7 +179,7 @@ function OrderRow({ o, tab }) {
     return (
       <tr className={`tr-hover ${ROW_ACCENT.zoho_affiliate}`}>
         <td className="td font-mono text-sm font-medium">{o.salesorder_number || o.salesorder_id}</td>
-        {wcCell(o)}
+        <WcIdCell o={o} onUpdate={onWcUpdate} updatingId={updatingWcId} />
         <td className="td text-sm text-gray-600">{fmtDate(o.order_date)}</td>
         <td className="td text-sm max-w-[160px] truncate" title={o.customer_name}>{o.customer_name || '—'}</td>
         <td className="td font-mono text-sm">{o.coupon_code}</td>
@@ -181,7 +194,7 @@ function OrderRow({ o, tab }) {
     return (
       <tr className={`tr-hover ${accent}`}>
         <td className="td font-mono text-sm font-medium">{o.salesorder_number || o.salesorder_id}</td>
-        {wcCell(o)}
+        <WcIdCell o={o} onUpdate={onWcUpdate} updatingId={updatingWcId} />
         <td className="td"><SourceBadge source={source} /></td>
         <td className="td text-sm text-gray-600">{fmtDate(o.order_date)}</td>
         <td className="td text-sm max-w-[160px] truncate" title={o.customer_name}>{o.customer_name || '—'}</td>
@@ -200,7 +213,7 @@ function OrderRow({ o, tab }) {
     return (
       <tr className={`tr-hover ${ROW_ACCENT[tab]}`}>
         <td className="td font-mono text-sm font-medium">{o.salesorder_number || o.salesorder_id}</td>
-        {wcCell(o)}
+        <WcIdCell o={o} onUpdate={onWcUpdate} updatingId={updatingWcId} />
         <td className="td text-sm text-gray-600">{fmtDate(o.order_date)}</td>
         <td className="td text-sm max-w-[160px] truncate" title={o.customer_name}>{o.customer_name || '—'}</td>
         <td className="td font-mono text-sm">{o.coupon_code || <span className="text-gray-300">—</span>}</td>
@@ -215,7 +228,7 @@ function OrderRow({ o, tab }) {
   return (
     <tr className={`tr-hover ${accent}`}>
       <td className="td font-mono text-sm font-medium">{o.salesorder_number || o.salesorder_id}</td>
-      {wcCell(o)}
+      <WcIdCell o={o} onUpdate={onWcUpdate} updatingId={updatingWcId} />
       <td className="td"><SegmentBadge segment={seg} /></td>
       <td className="td text-sm text-gray-600">{fmtDate(o.order_date)}</td>
       <td className="td text-sm max-w-[160px] truncate" title={o.customer_name}>{o.customer_name || '—'}</td>
@@ -270,6 +283,8 @@ export default function Orders() {
   const [loading, setLoading] = useState(true)
   const [error, setError]     = useState(null)
   const [offset, setOffset]   = useState(0)
+  const [updatingWcId, setUpdatingWcId] = useState(null)
+  const [bulkWc, setBulkWc]   = useState(null) // { running, done, total, ok, failed, errors }
 
   const search   = searchParams.get('q') || ''
   const status   = searchParams.get('status') || ''
@@ -310,6 +325,64 @@ export default function Orders() {
 
   useEffect(() => { load() }, [load])
 
+  const showWcBulk = tab === 'wc_affiliate' || tab === 'affiliate_coupon'
+
+  const updateOneWc = async (wcOrderId) => {
+    setUpdatingWcId(wcOrderId)
+    setError(null)
+    try {
+      await api.wcUpdateOrder(wcOrderId)
+    } catch (e) {
+      setError(`WC #${wcOrderId}: ${e.message}`)
+    } finally {
+      setUpdatingWcId(null)
+    }
+  }
+
+  const runBulkWcUpdate = async () => {
+    const segment = tab === 'affiliate_coupon' ? 'affiliate_coupon' : 'wc_affiliate'
+    const { ids, total } = await api.ordersWcIds({ segment })
+    const withIds = (ids || []).filter(Boolean)
+    if (!withIds.length) {
+      setError('No WooCommerce order IDs found for this tab')
+      return
+    }
+    if (!window.confirm(
+      `Update ${withIds.length} orders in WooCommerce?\n\n` +
+      'This re-saves each order (same as opening wp-admin and clicking Update) to trigger AffiliateWP hooks.'
+    )) return
+
+    setBulkWc({ running: true, done: 0, total: withIds.length, ok: 0, failed: 0, errors: [] })
+    setError(null)
+
+    const CHUNK = 10
+    let ok = 0
+    let failed = 0
+    const errors = []
+
+    try {
+      for (let i = 0; i < withIds.length; i += CHUNK) {
+        const chunk = withIds.slice(i, i + CHUNK)
+        const res = await api.wcBulkUpdate({ ids: chunk })
+        ok += res.ok?.length || 0
+        failed += res.failed?.length || 0
+        if (res.failed?.length) errors.push(...res.failed)
+        setBulkWc({
+          running: true,
+          done: Math.min(i + chunk.length, withIds.length),
+          total: withIds.length,
+          ok,
+          failed,
+          errors,
+        })
+      }
+      setBulkWc({ running: false, done: withIds.length, total: withIds.length, ok, failed, errors })
+    } catch (e) {
+      setError(e.message)
+      setBulkWc(prev => prev ? { ...prev, running: false } : null)
+    }
+  }
+
   const s = data.summary
   const apiHasSegments = s != null && (s.so != null || s.wc_affiliate != null)
   const page = Math.floor(offset / PAGE_SIZE) + 1
@@ -348,11 +421,41 @@ export default function Orders() {
         title="Orders"
         subtitle="SO · BB web · Affiliate Coupon (WC linked) · Zoho affiliate coupon"
         actions={
-          <ExportButtons baseName={`orders-${tab}`} sheetName="Orders" columns={EXPORT_COLUMNS} rows={exportRows} />
+          <div className="flex flex-wrap items-center gap-2">
+            {showWcBulk && (
+              <button type="button" className="btn-primary text-sm" onClick={runBulkWcUpdate}
+                disabled={bulkWc?.running}>
+                <RefreshCw size={15} className={bulkWc?.running ? 'animate-spin inline mr-1.5' : 'inline mr-1.5'} />
+                {bulkWc?.running
+                  ? `Updating ${bulkWc.done}/${bulkWc.total}…`
+                  : `Update all in WooCommerce (${s?.wc_affiliate ?? '…'})`}
+              </button>
+            )}
+            <ExportButtons baseName={`orders-${tab}`} sheetName="Orders" columns={EXPORT_COLUMNS} rows={exportRows} />
+          </div>
         }
       />
 
       {error && <ErrorMsg error={error} />}
+
+      {bulkWc && (
+        <div className={`mx-6 mb-4 rounded-lg border px-4 py-3 text-sm ${
+          bulkWc.running ? 'border-blue-200 bg-blue-50 text-blue-900' :
+          bulkWc.failed ? 'border-amber-200 bg-amber-50 text-amber-900' :
+          'border-green-200 bg-green-50 text-green-900'}`}>
+          {bulkWc.running
+            ? <>Updating WooCommerce orders: <strong>{bulkWc.done}/{bulkWc.total}</strong> (wp-admin Update equivalent)…</>
+            : <>Done: <strong>{bulkWc.ok}</strong> updated{bulkWc.failed > 0 && <>, <strong>{bulkWc.failed}</strong> failed</>}</>}
+          {bulkWc.errors?.length > 0 && (
+            <ul className="mt-2 text-xs list-disc pl-4">
+              {bulkWc.errors.slice(0, 5).map((e, i) => (
+                <li key={i}>WC #{e.wc_order_id}: {e.error}</li>
+              ))}
+              {bulkWc.errors.length > 5 && <li>…and {bulkWc.errors.length - 5} more</li>}
+            </ul>
+          )}
+        </div>
+      )}
 
       {!apiHasSegments && !loading && (
         <div className="mx-6 mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
@@ -420,6 +523,7 @@ export default function Orders() {
           <strong> Affiliate Coupon</strong> = linked affiliates only — commission = subtotal × WC discount %.
           <strong> Zoho affiliate coupon</strong> = affiliate-type code on the order but not linked in WooCommerce (no commission).
           SO/BB tabs exclude affiliate-coupon orders.
+          Use <strong>Update all in WooCommerce</strong> to re-save each order (same as wp-admin Update).
         </span>
       </div>
 
@@ -484,7 +588,10 @@ export default function Orders() {
                 ? <tr><td colSpan={headers.length}><Spinner /></td></tr>
                 : data.items.length === 0
                   ? <tr><td colSpan={headers.length}><Empty label={`No ${SEGMENTS[tab]?.label?.toLowerCase() || 'orders'}`} /></td></tr>
-                  : data.items.map(o => <OrderRow key={o.salesorder_id} o={o} tab={tab} />)
+                  : data.items.map(o => (
+                    <OrderRow key={o.salesorder_id} o={o} tab={tab}
+                      onWcUpdate={showWcBulk ? updateOneWc : null} updatingWcId={updatingWcId} />
+                  ))
               }
             </tbody>
           </table>
