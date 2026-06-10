@@ -1,0 +1,35 @@
+# Render Blueprint — Node/Express backend for the BigBattery Affiliate Dashboard.
+# Reads from Supabase (same DB as the commission system) and syncs AffiliateWP
+# every 30 minutes. Frontend is deployed separately on Vercel.
+services:
+  - type: web
+    name: affiliate-dashboard-api
+    runtime: node
+    plan: free
+    region: oregon
+    branch: main
+    buildCommand: "npm install"
+    startCommand: "node server.js"
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      # Supabase Postgres connection string — set value in Render dashboard:
+      - key: DATABASE_URL
+        sync: false
+      # AffiliateWP REST API credentials — set values in Render dashboard:
+      - key: AFFWP_PUBLIC_KEY
+        sync: false
+      - key: AFFWP_TOKEN
+        sync: false
+      - key: AFFWP_SECRET_KEY
+        sync: false
+      # Supabase project URL (public, not secret):
+      - key: SUPABASE_URL
+        value: "https://evgmeszyxjzrrbrzznhv.supabase.co"
+      - key: SYNC_INTERVAL_MINUTES
+        value: "30"
+      # Your Vercel frontend URL(s), comma-separated — set after deploying frontend:
+      - key: ALLOWED_ORIGINS
+        sync: false
