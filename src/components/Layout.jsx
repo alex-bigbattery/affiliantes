@@ -2,7 +2,7 @@ import { NavLink } from 'react-router-dom'
 import { useEffect, useState } from 'react'
 import {
   LayoutDashboard, Users, ArrowLeftRight, DollarSign,
-  Eye, Tag, Image, RefreshCw, Zap, Database, Menu, X
+  Eye, Tag, Image, RefreshCw, Zap, Database, Menu, X, ShoppingCart
 } from 'lucide-react'
 import { api } from '../api'
 
@@ -13,6 +13,7 @@ const links = [
   { to: '/payouts',     label: 'Payouts',      icon: DollarSign },
   { to: '/visits',      label: 'Visits',       icon: Eye },
   { to: '/coupons',     label: 'Coupons',      icon: Tag },
+  { to: '/orders',      label: 'Orders',       icon: ShoppingCart },
   { to: '/creatives',   label: 'Creatives',    icon: Image },
   { to: '/sync',        label: 'Sync DB',      icon: Database },
 ]

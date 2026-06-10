@@ -46,6 +46,9 @@ export const api = {
   // Visits
   visits: (p) => get('/visits', p),
 
+  // Orders (Zoho sales_orders)
+  orders: (p) => get('/orders', p),
+
   // Coupons
   coupons:       (p)        => get('/coupons', p),
   updateCoupon:  (code, d)  => put('/coupons', { coupon_code: code, ...d }),

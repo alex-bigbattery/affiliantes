@@ -271,6 +271,111 @@ app.get('/api/visits', handle(async req => {
   return rows
 }))
 
+// ── ORDERS (Zoho sales_orders in Supabase) ───────────────────────────────────
+const COUPON_EXPR = `LOWER(TRIM(s.raw_json::jsonb->'custom_field_hash'->>'cf_coupon_s'))`
+
+app.get('/api/orders', handle(async req => {
+  const {
+    number = 50, offset = 0, search, status, coupon,
+    date_from, date_to, has_coupon, order = 'DESC',
+  } = req.query
+
+  const vals = []
+  const clauses = []
+
+  if (status) {
+    vals.push(status)
+    clauses.push(`s.status = $${vals.length}`)
+  }
+  if (search) {
+    vals.push(`%${search}%`)
+    clauses.push(`(
+      s.salesorder_number ILIKE $${vals.length}
+      OR s.customer_name ILIKE $${vals.length}
+      OR s.reference_number ILIKE $${vals.length}
+      OR ${COUPON_EXPR} ILIKE $${vals.length}
+    )`)
+  }
+  if (coupon) {
+    vals.push(String(coupon).toLowerCase().trim())
+    clauses.push(`${COUPON_EXPR} = $${vals.length}`)
+  }
+  if (date_from) {
+    vals.push(date_from)
+    clauses.push(`s.order_date >= $${vals.length}`)
+  }
+  if (date_to) {
+    vals.push(date_to)
+    clauses.push(`s.order_date <= $${vals.length}`)
+  }
+  if (has_coupon === 'true') {
+    clauses.push(`NULLIF(TRIM(s.raw_json::jsonb->'custom_field_hash'->>'cf_coupon_s'),'') IS NOT NULL`)
+    clauses.push(`${COUPON_EXPR} NOT IN ('.', '-', 'n/a', 'na', 'none')`)
+  } else if (has_coupon === 'false') {
+    clauses.push(`(
+      NULLIF(TRIM(s.raw_json::jsonb->'custom_field_hash'->>'cf_coupon_s'),'') IS NULL
+      OR ${COUPON_EXPR} IN ('.', '-', 'n/a', 'na', 'none')
+    )`)
+  }
+
+  const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''
+  const sortDir = String(order).toUpperCase() === 'ASC' ? 'ASC' : 'DESC'
+
+  const baseFrom = `
+    FROM sales_orders s
+    LEFT JOIN coupon_map m ON m.coupon_code = ${COUPON_EXPR}
+    ${where}
+  `
+
+  const [{ rows }, { rows: [countRow] }, { rows: [sumRow] }] = await Promise.all([
+    pool.query(`
+      SELECT
+        s.salesorder_id,
+        s.salesorder_number,
+        s.order_date,
+        s.reference_number,
+        s.status,
+        s.customer_name,
+        s.salesperson_name,
+        s.sub_total,
+        s.total,
+        s.shipping_charge,
+        s.last_modified_time,
+        NULLIF(${COUPON_EXPR}, '') AS coupon_code,
+        m.affiliate_name,
+        m.affiliate_id,
+        m.kind AS coupon_kind
+      FROM sales_orders s
+      LEFT JOIN coupon_map m ON m.coupon_code = ${COUPON_EXPR}
+      ${where}
+      ORDER BY s.order_date ${sortDir} NULLS LAST, s.salesorder_number ${sortDir}
+      LIMIT $${vals.push(number)} OFFSET $${vals.push(offset)}
+    `, vals),
+    pool.query(`SELECT COUNT(*)::int AS total ${baseFrom}`, vals.slice(0, -2)),
+    pool.query(`
+      SELECT
+        COUNT(*)::int AS filtered_orders,
+        COUNT(*) FILTER (WHERE NULLIF(${COUPON_EXPR}, '') IS NOT NULL
+          AND ${COUPON_EXPR} NOT IN ('.', '-', 'n/a', 'na', 'none'))::int AS with_coupon,
+        COALESCE(SUM(s.total), 0) AS total_revenue,
+        COALESCE(SUM(s.sub_total), 0) AS total_subtotal
+      ${baseFrom}
+    `, vals.slice(0, -2)),
+  ])
+
+  return {
+    items: rows,
+    total: countRow.total,
+    summary: {
+      filtered_orders: sumRow.filtered_orders,
+      with_coupon:     sumRow.with_coupon,
+      total_revenue:   parseFloat(sumRow.total_revenue),
+      total_subtotal:  parseFloat(sumRow.total_subtotal),
+    },
+    source: 'zoho_sales_orders',
+  }
+}))
+
 // ── COUPONS / CREATIVES (live proxy — graceful on "not available"/"empty") ──
 // AffiliateWP on bigbattery.com does not register the /coupons REST route
 // (rest_no_route) and has no creatives (no_creatives). Treat those as empty

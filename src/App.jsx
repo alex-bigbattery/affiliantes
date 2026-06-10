@@ -7,6 +7,7 @@ import Referrals from './pages/Referrals'
 import Payouts from './pages/Payouts'
 import Visits from './pages/Visits'
 import Coupons from './pages/Coupons'
+import Orders from './pages/Orders'
 import Creatives from './pages/Creatives'
 import Sync from './pages/Sync'
 
@@ -22,6 +23,7 @@ export default function App() {
           <Route path="/payouts"        element={<Payouts />} />
           <Route path="/visits"         element={<Visits />} />
           <Route path="/coupons"        element={<Coupons />} />
+          <Route path="/orders"         element={<Orders />} />
           <Route path="/creatives"      element={<Creatives />} />
           <Route path="/sync"           element={<Sync />} />
         </Routes>
