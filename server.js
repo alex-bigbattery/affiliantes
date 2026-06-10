@@ -335,7 +335,18 @@ app.get('/api/coupons', handle(async () => {
       COALESCE(m.kind, 'unclassified') AS kind,
       m.affiliate_name, m.affiliate_email, m.affiliate_id, m.rate,
       COALESCE(m.confirmed, false) AS confirmed, m.notes,
-      CASE WHEN m.rate IS NOT NULL
+      CASE
+        WHEN cat.coupon IS NOT NULL AND m.affiliate_id IS NOT NULL AND m.kind = 'affiliate'
+          THEN 'wc_linked'
+        WHEN cat.coupon IS NOT NULL AND m.kind = 'affiliate'
+          THEN 'wc_unlinked'
+        WHEN cat.coupon IS NOT NULL AND m.kind = 'promo'
+          THEN 'wc_promo'
+        WHEN cat.coupon IS NULL AND u.coupon IS NOT NULL
+          THEN 'zoho_only'
+        ELSE 'other'
+      END AS segment,
+      CASE WHEN m.affiliate_id IS NOT NULL AND m.kind = 'affiliate' AND m.rate IS NOT NULL
            THEN ROUND((COALESCE(u.subtotal, 0) * m.rate / 100.0)::numeric, 2) END AS est_commission,
       (cat.coupon IS NOT NULL) AS in_woocommerce,
       (u.coupon IS NOT NULL) AS in_zoho_orders
@@ -348,17 +359,23 @@ app.get('/api/coupons', handle(async () => {
 
   const { rows: [wcCount] } = await pool.query(`SELECT COUNT(*)::int AS n FROM wc_coupons`)
 
+  const bySeg = seg => rows.filter(r => r.segment === seg)
   const summary = {
     total_codes:       rows.length,
     woocommerce_codes: wcCount.n,
+    wc_linked:         bySeg('wc_linked').length,
+    wc_unlinked:       bySeg('wc_unlinked').length,
+    wc_promo:          bySeg('wc_promo').length,
+    zoho_only:         bySeg('zoho_only').length,
     affiliate_codes:   rows.filter(r => r.kind === 'affiliate').length,
     promo_codes:       rows.filter(r => r.kind === 'promo').length,
     unclassified:      rows.filter(r => r.kind === 'unclassified').length,
     unused_in_zoho:    rows.filter(r => r.in_woocommerce && !r.in_zoho_orders).length,
     total_orders:      rows.reduce((s, r) => s + Number(r.orders), 0),
     total_revenue:     rows.reduce((s, r) => s + Number(r.revenue || 0), 0),
-    affiliate_revenue: rows.filter(r => r.kind === 'affiliate').reduce((s, r) => s + Number(r.revenue || 0), 0),
-    est_commission:    rows.reduce((s, r) => s + Number(r.est_commission || 0), 0),
+    linked_revenue:    bySeg('wc_linked').reduce((s, r) => s + Number(r.revenue || 0), 0),
+    zoho_only_revenue: bySeg('zoho_only').reduce((s, r) => s + Number(r.revenue || 0), 0),
+    est_commission:    bySeg('wc_linked').reduce((s, r) => s + Number(r.est_commission || 0), 0),
   }
 
   const data = { items: rows, summary, source: 'woocommerce+zoho' }

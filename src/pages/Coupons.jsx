@@ -1,23 +1,28 @@
 import { useState, useEffect, useMemo } from 'react'
-import { Info, Pencil, Search, Tag } from 'lucide-react'
+import { Info, Pencil, Search } from 'lucide-react'
 import { api, fmt, fmtDate } from '../api'
 import { PageHeader, Spinner, ErrorMsg, Empty, Modal, StatCard } from '../components/Layout'
 import ExportButtons from '../components/ExportButtons'
 
+const SEGMENTS = {
+  wc_linked:   { label: 'WC + AffiliateWP', short: 'Linked affiliate coupons in WooCommerce with an AffiliateWP owner' },
+  zoho_only:   { label: 'Zoho only',        short: 'Used on Zoho orders but not in the WooCommerce catalog' },
+  wc_unlinked: { label: 'WC unlinked',      short: 'Affiliate-type WC coupons with no AffiliateWP owner assigned' },
+  wc_promo:    { label: 'WC promos',        short: 'Store promos in WooCommerce (not affiliate commissions)' },
+  all:         { label: 'All',              short: 'Every coupon code across both sources' },
+}
+
 const EXPORT_COLUMNS = [
-  { header: 'Coupon',         value: c => c.coupon_code },
-  { header: 'WC discount',    value: c => formatDiscount(c) },
-  { header: 'WC status',      value: c => c.wc_status || '' },
-  { header: 'Type',           value: c => c.kind },
-  { header: 'Affiliate',      value: c => c.affiliate_name || '' },
-  { header: 'WC uses',        value: c => c.wc_usage_count ?? '' },
-  { header: 'Zoho orders',    value: c => Number(c.orders || 0) },
-  { header: 'Revenue',        value: c => Number(c.revenue || 0) },
-  { header: 'Subtotal',       value: c => Number(c.subtotal || 0) },
+  { header: 'Segment',         value: c => c.segment || '' },
+  { header: 'Coupon',          value: c => c.coupon_code },
+  { header: 'WC discount',     value: c => formatDiscount(c) },
+  { header: 'Affiliate',       value: c => c.affiliate_name || '' },
+  { header: 'AffiliateWP ID',  value: c => c.affiliate_id ?? '' },
+  { header: 'Zoho orders',     value: c => Number(c.orders || 0) },
+  { header: 'Revenue',         value: c => Number(c.revenue || 0) },
+  { header: 'Subtotal',        value: c => Number(c.subtotal || 0) },
   { header: 'Est. commission', value: c => c.est_commission != null ? Number(c.est_commission) : '' },
-  { header: 'Confirmed',      value: c => c.confirmed ? 'yes' : 'no' },
-  { header: 'First order',    value: c => c.first_order ? String(c.first_order).slice(0, 10) : '' },
-  { header: 'Last order',     value: c => c.last_order ? String(c.last_order).slice(0, 10) : '' },
+  { header: 'Last order',      value: c => c.last_order ? String(c.last_order).slice(0, 10) : '' },
 ]
 
 function formatDiscount(c) {
@@ -28,22 +33,123 @@ function formatDiscount(c) {
   return String(amt)
 }
 
-const KIND_META = {
-  affiliate:    { label: 'Affiliate',    cls: 'bg-green-100 text-green-700' },
-  promo:        { label: 'Promo',        cls: 'bg-blue-100 text-blue-700' },
-  unclassified: { label: 'Unclassified', cls: 'bg-amber-100 text-amber-700' },
+function SegmentBadge({ segment }) {
+  const cls = {
+    wc_linked:   'bg-green-100 text-green-800',
+    zoho_only:   'bg-purple-100 text-purple-800',
+    wc_unlinked: 'bg-amber-100 text-amber-800',
+    wc_promo:    'bg-blue-100 text-blue-800',
+    other:       'bg-gray-100 text-gray-600',
+  }[segment] || 'bg-gray-100 text-gray-600'
+  const label = SEGMENTS[segment]?.label || segment
+  return <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${cls}`}>{label}</span>
 }
 
-function KindBadge({ kind }) {
-  const m = KIND_META[kind] || KIND_META.unclassified
-  return <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${m.cls}`}>{m.label}</span>
+function tableHeaders(tab) {
+  if (tab === 'zoho_only') {
+    return ['Coupon', 'Zoho orders', 'Revenue', 'Subtotal', 'Last used', '']
+  }
+  if (tab === 'wc_unlinked') {
+    return ['Coupon', 'WC %', 'Zoho orders', 'Revenue', 'Issue', '']
+  }
+  if (tab === 'wc_promo') {
+    return ['Coupon', 'WC %', 'Zoho orders', 'Revenue', 'Last used', '']
+  }
+  if (tab === 'wc_linked') {
+    return ['Coupon', 'WC %', 'Affiliate', 'AWP ID', 'Zoho orders', 'Revenue', 'Est. commission', 'Last used', '']
+  }
+  return ['Coupon', 'Source', 'WC %', 'Affiliate', 'Zoho orders', 'Revenue', 'Est. commission', 'Last used', '']
+}
+
+function CouponRow({ c, tab, onEdit }) {
+  const commission = c.est_commission != null
+    ? <span className="font-semibold text-brand-orange">{fmt(c.est_commission)}</span>
+    : <span className="text-gray-300">—</span>
+
+  if (tab === 'zoho_only') {
+    return (
+      <tr className="tr-hover">
+        <td className="td font-mono font-semibold">{c.coupon_code}</td>
+        <td className="td text-right text-sm">{c.orders}</td>
+        <td className="td text-right text-sm font-medium">{fmt(c.revenue)}</td>
+        <td className="td text-right text-sm">{fmt(c.subtotal)}</td>
+        <td className="td text-xs text-gray-500">{fmtDate(c.last_order)}</td>
+        <td className="td text-right">
+          <button onClick={() => onEdit(c)} className="btn-ghost px-2 py-1" title="Classify"><Pencil size={14} /></button>
+        </td>
+      </tr>
+    )
+  }
+
+  if (tab === 'wc_unlinked') {
+    return (
+      <tr className="tr-hover">
+        <td className="td font-mono font-semibold">{c.coupon_code}</td>
+        <td className="td text-sm text-gray-600">{formatDiscount(c) || '—'}</td>
+        <td className="td text-right text-sm">{c.orders}</td>
+        <td className="td text-right text-sm font-medium">{fmt(c.revenue)}</td>
+        <td className="td text-xs text-amber-700">No AffiliateWP link in WC</td>
+        <td className="td text-right">
+          <button onClick={() => onEdit(c)} className="btn-ghost px-2 py-1" title="Classify"><Pencil size={14} /></button>
+        </td>
+      </tr>
+    )
+  }
+
+  if (tab === 'wc_promo') {
+    return (
+      <tr className="tr-hover">
+        <td className="td font-mono font-semibold">{c.coupon_code}</td>
+        <td className="td text-sm text-gray-600">{formatDiscount(c) || '—'}</td>
+        <td className="td text-right text-sm">{c.orders}</td>
+        <td className="td text-right text-sm font-medium">{fmt(c.revenue)}</td>
+        <td className="td text-xs text-gray-500">{fmtDate(c.last_order)}</td>
+        <td className="td" />
+      </tr>
+    )
+  }
+
+  if (tab === 'wc_linked') {
+    return (
+      <tr className="tr-hover">
+        <td className="td font-mono font-semibold">{c.coupon_code}</td>
+        <td className="td text-sm text-gray-600">{formatDiscount(c) || '—'}</td>
+        <td className="td text-sm">{c.affiliate_name || '—'}</td>
+        <td className="td text-sm text-gray-500 font-mono">{c.affiliate_id ?? '—'}</td>
+        <td className="td text-right text-sm">{c.orders}</td>
+        <td className="td text-right text-sm font-medium">{fmt(c.revenue)}</td>
+        <td className="td text-right text-sm">{commission}</td>
+        <td className="td text-xs text-gray-500">{fmtDate(c.last_order)}</td>
+        <td className="td text-right">
+          <button onClick={() => onEdit(c)} className="btn-ghost px-2 py-1" title="Edit"><Pencil size={14} /></button>
+        </td>
+      </tr>
+    )
+  }
+
+  // all
+  return (
+    <tr className="tr-hover">
+      <td className="td font-mono font-semibold">{c.coupon_code}</td>
+      <td className="td"><SegmentBadge segment={c.segment} /></td>
+      <td className="td text-sm text-gray-600">{formatDiscount(c) || '—'}</td>
+      <td className="td text-sm">{c.affiliate_name || '—'}</td>
+      <td className="td text-right text-sm">{c.orders}</td>
+      <td className="td text-right text-sm font-medium">{fmt(c.revenue)}</td>
+      <td className="td text-right text-sm">{commission}</td>
+      <td className="td text-xs text-gray-500">{fmtDate(c.last_order)}</td>
+      <td className="td text-right">
+        <button onClick={() => onEdit(c)} className="btn-ghost px-2 py-1" title="Edit"><Pencil size={14} /></button>
+      </td>
+    </tr>
+  )
 }
 
 export default function Coupons() {
   const [data, setData]       = useState({ items: [], summary: null })
   const [loading, setLoading] = useState(true)
   const [error, setError]     = useState(null)
-  const [tab, setTab]         = useState('all')
+  const [tab, setTab]         = useState('wc_linked')
   const [search, setSearch]   = useState('')
   const [editing, setEditing] = useState(null)
 
@@ -59,70 +165,72 @@ export default function Coupons() {
   const s = data.summary
   const filtered = useMemo(() => {
     let rows = data.items
-    if (tab !== 'all') rows = rows.filter(r => r.kind === tab)
+    if (tab !== 'all') rows = rows.filter(r => r.segment === tab)
     if (search.trim()) {
       const q = search.toLowerCase()
       rows = rows.filter(r =>
         r.coupon_code?.toLowerCase().includes(q) ||
-        r.affiliate_name?.toLowerCase().includes(q))
+        r.affiliate_name?.toLowerCase().includes(q) ||
+        String(r.affiliate_id || '').includes(q))
     }
     return rows
   }, [data.items, tab, search])
 
   const tabs = [
-    { key: 'all',          label: 'All',          n: data.items.length },
-    { key: 'affiliate',    label: 'Affiliates',   n: s?.affiliate_codes },
-    { key: 'promo',        label: 'Promos',       n: s?.promo_codes },
-    { key: 'unclassified', label: 'Unclassified', n: s?.unclassified },
+    { key: 'wc_linked',   n: s?.wc_linked },
+    { key: 'zoho_only',   n: s?.zoho_only },
+    { key: 'wc_unlinked', n: s?.wc_unlinked },
+    { key: 'wc_promo',    n: s?.wc_promo },
+    { key: 'all',         n: s?.total_codes },
   ]
+
+  const headers = tableHeaders(tab)
+  const colSpan = headers.length
 
   return (
     <div>
       <PageHeader
         title="Coupons"
-        subtitle="WooCommerce catalog synced to Supabase + Zoho order usage (cf_coupon_s)"
+        subtitle="Split by source: WooCommerce + AffiliateWP vs Zoho order usage"
         actions={
-          <ExportButtons baseName="coupons" sheetName="Coupons" columns={EXPORT_COLUMNS} rows={filtered} />
+          <ExportButtons baseName={`coupons-${tab}`} sheetName="Coupons" columns={EXPORT_COLUMNS} rows={filtered} />
         }
       />
 
       {error && <ErrorMsg error={error} />}
 
-      {/* Summary cards */}
       {s && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 px-6 mb-4">
-          <StatCard label="Total codes" value={s.total_codes}
-            sub={`${s.woocommerce_codes ?? '—'} in WooCommerce`} />
-          <StatCard label="Affiliate coupons" value={s.affiliate_codes}
-            sub={`${s.unclassified} unclassified`} color="text-green-600" />
-          <StatCard label="Affiliate revenue" value={fmt(s.affiliate_revenue)}
-            sub={`of ${fmt(s.total_revenue)} total`} color="text-navy-700" />
-          <StatCard label="Estimated commission" value={fmt(s.est_commission)}
-            sub="affiliates with defined rate" color="text-brand-orange" />
+          <StatCard label="WC + AffiliateWP" value={s.wc_linked}
+            sub={`${s.unused_in_zoho ?? 0} linked codes with no Zoho orders yet`} color="text-green-600" />
+          <StatCard label="Zoho only" value={s.zoho_only}
+            sub={fmt(s.zoho_only_revenue) + ' revenue'} color="text-purple-600" />
+          <StatCard label="WC unlinked" value={s.wc_unlinked}
+            sub="affiliate coupon, no owner" color="text-amber-600" />
+          <StatCard label="Est. commission" value={fmt(s.est_commission)}
+            sub="linked affiliates only" color="text-brand-orange" />
         </div>
       )}
 
-      {/* Info note */}
       <div className="mx-6 mb-4 flex items-start gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
         <Info size={18} className="mt-0.5 shrink-0 text-blue-500" />
         <span>
-          Coupons and rates come from <strong>WooCommerce</strong> only. Affiliates are linked via WC meta
-          (<code>affwp_discount_affiliate</code> → AffiliateWP ID for display). Estimated commission =
-          Zoho subtotal × WC discount %. Revenue from <strong>Zoho</strong> orders.
-          {s.unused_in_zoho > 0 && (
-            <> <strong>{s.unused_in_zoho}</strong> WooCommerce codes have no Zoho orders yet.</>
-          )}
+          <strong>WC + AffiliateWP</strong> — coupon exists in WooCommerce and has an owner via{' '}
+          <code>affwp_discount_affiliate</code>. Commission = Zoho subtotal × WC discount %.
+          <strong> Zoho only</strong> — code appeared on orders (<code>cf_coupon_s</code>) but is not in WooCommerce;
+          no commission until classified and linked.
+          <strong> WC unlinked</strong> — marked affiliate in WooCommerce but no AffiliateWP ID; revenue shows, commission does not.
         </span>
       </div>
 
-      {/* Tabs + search */}
-      <div className="flex flex-wrap items-center justify-between gap-3 px-6 mb-3">
-        <div className="flex gap-1">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-6 mb-1">
+        <div className="flex flex-wrap gap-1">
           {tabs.map(t => (
             <button key={t.key} onClick={() => setTab(t.key)}
               className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
                 tab === t.key ? 'bg-navy-700 text-white' : 'text-gray-600 hover:bg-gray-100'}`}>
-              {t.label}{t.n != null && <span className="ml-1.5 opacity-60">{t.n}</span>}
+              {SEGMENTS[t.key].label}
+              {t.n != null && <span className="ml-1.5 opacity-60">{t.n}</span>}
             </button>
           ))}
         </div>
@@ -132,58 +240,28 @@ export default function Coupons() {
             value={search} onChange={e => setSearch(e.target.value)} />
         </div>
       </div>
+      <p className="px-6 mb-3 text-xs text-gray-500">{SEGMENTS[tab].short}</p>
 
-      {/* Table */}
       <div className="px-6 pb-8">
         <div className="card overflow-x-auto">
           <table className="w-full">
             <thead>
               <tr className="border-b">
-                {['Coupon','WC %','Type','Affiliate','Orders','Revenue','Est. commission','Last used',''].map((h,i) =>
-                  <th key={i} className={`th ${['Orders','Revenue','Est. commission'].includes(h) ? 'text-right' : ''}`}>{h}</th>
-                )}
+                {headers.map((h, i) => (
+                  <th key={i} className={`th ${
+                    ['Zoho orders', 'Revenue', 'Subtotal', 'Est. commission'].includes(h) ? 'text-right' : ''}`}>
+                    {h}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {loading
-                ? <tr><td colSpan={9}><Spinner /></td></tr>
+                ? <tr><td colSpan={colSpan}><Spinner /></td></tr>
                 : filtered.length === 0
-                  ? <tr><td colSpan={9}><Empty label="No coupons" /></td></tr>
+                  ? <tr><td colSpan={colSpan}><Empty label="No coupons in this group" /></td></tr>
                   : filtered.map(c => (
-                    <tr key={c.coupon_code} className="tr-hover">
-                      <td className="td font-mono font-semibold">
-                        <div className="flex items-center gap-1.5">
-                          <Tag size={13} className="text-gray-400 shrink-0" />
-                          <span>{c.coupon_code}</span>
-                          {c.in_woocommerce && !c.in_zoho_orders &&
-                            <span className="text-[10px] uppercase tracking-wide text-gray-400 font-sans">WC only</span>}
-                        </div>
-                      </td>
-                      <td className="td text-sm text-gray-600">
-                        {c.discount_amount != null
-                          ? formatDiscount(c)
-                          : <span className="text-gray-300">—</span>}
-                      </td>
-                      <td className="td"><KindBadge kind={c.kind} /></td>
-                      <td className="td text-sm">
-                        {c.affiliate_name || <span className="text-gray-400">—</span>}
-                        {c.kind === 'affiliate' && !c.confirmed &&
-                          <span className="ml-1.5 text-xs text-amber-600" title="Owner unconfirmed">⚠</span>}
-                      </td>
-                      <td className="td text-right text-sm">{c.orders}</td>
-                      <td className="td text-right text-sm font-medium">{fmt(c.revenue)}</td>
-                      <td className="td text-right text-sm">
-                        {c.est_commission != null
-                          ? <span className="font-semibold text-brand-orange">{fmt(c.est_commission)}</span>
-                          : <span className="text-gray-300">—</span>}
-                      </td>
-                      <td className="td text-xs text-gray-500">{fmtDate(c.last_order)}</td>
-                      <td className="td text-right">
-                        <button onClick={() => setEditing(c)} className="btn-ghost px-2 py-1" title="Edit classification">
-                          <Pencil size={14} />
-                        </button>
-                      </td>
-                    </tr>
+                    <CouponRow key={c.coupon_code} c={c} tab={tab} onEdit={setEditing} />
                   ))
               }
             </tbody>
@@ -226,7 +304,9 @@ function EditCouponModal({ coupon, onClose, onSaved }) {
     <Modal title={`Coupon: ${coupon.coupon_code}`} onClose={onClose}>
       <div className="space-y-3">
         <div className="text-xs text-gray-500 bg-gray-50 rounded-md px-3 py-2">
-          {coupon.orders} orders · {fmt(coupon.revenue)} in revenue · subtotal {fmt(coupon.subtotal)}
+          {coupon.segment && <div>Segment: <strong>{SEGMENTS[coupon.segment]?.label || coupon.segment}</strong></div>}
+          {coupon.orders} Zoho orders · {fmt(coupon.revenue)} revenue · subtotal {fmt(coupon.subtotal)}
+          {coupon.affiliate_id && <div>AffiliateWP ID: {coupon.affiliate_id}</div>}
         </div>
 
         <label className="block">
