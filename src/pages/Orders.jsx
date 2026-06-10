@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Search, ChevronLeft, ChevronRight, Info, RefreshCw } from 'lucide-react'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts'
-import { api, fmt, fmtDate } from '../api'
+import { api, fmt, fmtDateTime } from '../api'
 import { PageHeader, Spinner, ErrorMsg, Empty, StatCard } from '../components/Layout'
 import ExportButtons from '../components/ExportButtons'
 
@@ -56,17 +56,23 @@ const EXPORT_COLUMNS = [
   { header: 'Source',          value: o => o.affiliate_source || '' },
   { header: 'Order #',         value: o => o.salesorder_number || o.salesorder_id },
   { header: 'WC ID',           value: o => o.wc_order_id ?? '' },
-  { header: 'Date',            value: o => o.order_date ? String(o.order_date).slice(0, 10) : '' },
+  { header: 'Date',            value: o => o.order_datetime || o.order_date || '' },
   { header: 'Customer',        value: o => o.customer_name || '' },
+  { header: 'Customer type',   value: o => o.customer_type || '' },
   { header: 'Coupon',          value: o => o.coupon_code || '' },
+  { header: 'Product(s)',      value: o => o.products_text || '' },
+  { header: 'Items sold',      value: o => o.items_sold ?? '' },
   { header: 'Affiliate',       value: o => o.affiliate_name || '' },
   { header: 'AWP ID',          value: o => o.affiliate_id ?? '' },
   { header: 'Net',             value: o => Number(o.sub_total || 0) },
   { header: 'Revenue',         value: o => Number(o.total || 0) },
+  { header: 'Net Sales',       value: o => o.net_sales != null ? Number(o.net_sales) : '' },
   { header: 'Est. commission', value: o => o.est_commission != null ? Number(o.est_commission) : '' },
   { header: 'Status',          value: o => o.status || '' },
   { header: 'Reference',       value: o => o.reference_number || '' },
 ]
+
+const RIGHT_HEADERS = ['Net', 'Revenue', 'Net Sales', 'Commission', 'Items sold']
 
 function inferSegment(o) {
   if (o.segment) return o.segment
@@ -143,8 +149,6 @@ function WcUpdateCell({ o }) {
     </td>
   )
 }
-
-const MONEY_HEADERS = ['Net', 'Revenue', 'Commission']
 
 function affiliateLabel(a) {
   return `#${a.affiliate_id} — ${a.display_name || a.username || a.payment_email || `user ${a.user_id}`}`
@@ -223,6 +227,16 @@ function SearchableAffiliateSelect({ affiliates, value, onChange }) {
   )
 }
 
+function DetailCells({ o }) {
+  return (
+    <>
+      <td className="td text-sm text-gray-600 capitalize">{o.customer_type || '—'}</td>
+      <td className="td text-sm max-w-[280px] truncate" title={o.products_text}>{o.products_text || '—'}</td>
+      <td className="td text-right text-sm">{o.items_sold ?? '—'}</td>
+    </>
+  )
+}
+
 function MoneyCells({ o, showCommission = false }) {
   const commission = o.est_commission != null
     ? <span className="font-semibold text-brand-orange">{fmt(o.est_commission)}</span>
@@ -231,6 +245,7 @@ function MoneyCells({ o, showCommission = false }) {
     <>
       <td className="td text-right text-sm">{fmt(o.sub_total)}</td>
       <td className="td text-right text-sm font-medium">{fmt(o.total)}</td>
+      <td className="td text-right text-sm">{o.net_sales != null ? fmt(o.net_sales) : '—'}</td>
       {showCommission && <td className="td text-right text-sm">{commission}</td>}
     </>
   )
@@ -248,19 +263,24 @@ function SourceBadge({ source }) {
 
 function tableHeaders(tab) {
   const updateCol = 'WC Admin'
+  const detail = ['Customer type', 'Product(s)', 'Items sold']
+  const money = (commission = false) => commission
+    ? ['Net', 'Revenue', 'Net Sales', 'Commission']
+    : ['Net', 'Revenue', 'Net Sales']
+
   if (tab === 'wc_affiliate') {
-    return ['Order #', 'WC ID', 'Date', 'Customer', 'Coupon', 'Affiliate', 'AWP ID', ...MONEY_HEADERS, 'Status', updateCol]
+    return ['Order #', 'WC ID', 'Date', 'Customer', ...detail, 'Coupon', 'Affiliate', 'AWP ID', ...money(true), 'Status', updateCol]
   }
   if (tab === 'zoho_affiliate') {
-    return ['Order #', 'WC ID', 'Date', 'Customer', 'Coupon', 'Affiliate', 'AWP ID', 'Net', 'Revenue', 'Status', updateCol]
+    return ['Order #', 'WC ID', 'Date', 'Customer', ...detail, 'Coupon', 'Affiliate', 'AWP ID', ...money(), 'Status', updateCol]
   }
   if (tab === 'affiliate_coupon') {
-    return ['Order #', 'WC ID', 'Source', 'Date', 'Customer', 'Coupon', 'Affiliate', 'AWP ID', ...MONEY_HEADERS, 'Status', updateCol]
+    return ['Order #', 'WC ID', 'Source', 'Date', 'Customer', ...detail, 'Coupon', 'Affiliate', 'AWP ID', ...money(true), 'Status', updateCol]
   }
   if (tab === 'bb' || tab === 'so') {
-    return ['Order #', 'WC ID', 'Date', 'Customer', 'Coupon', 'Affiliate', 'Net', 'Revenue', 'Status', 'Reference', updateCol]
+    return ['Order #', 'WC ID', 'Date', 'Customer', ...detail, 'Coupon', 'Affiliate', ...money(), 'Status', 'Reference', updateCol]
   }
-  return ['Order #', 'WC ID', 'Type', 'Date', 'Customer', 'Coupon', 'Affiliate', ...MONEY_HEADERS, 'Status', updateCol]
+  return ['Order #', 'WC ID', 'Type', 'Date', 'Customer', ...detail, 'Coupon', 'Affiliate', ...money(true), 'Status', updateCol]
 }
 
 function OrderRow({ o, tab }) {
@@ -273,8 +293,9 @@ function OrderRow({ o, tab }) {
       <tr className={`tr-hover ${ROW_ACCENT.wc_affiliate}`}>
         <td className="td font-mono text-sm font-medium">{o.salesorder_number || o.salesorder_id}</td>
         <WcIdCell o={o} />
-        <td className="td text-sm text-gray-600">{fmtDate(o.order_date)}</td>
+        <td className="td text-sm text-gray-600 whitespace-nowrap">{fmtDateTime(o.order_datetime || o.order_date)}</td>
         <td className="td text-sm max-w-[160px] truncate" title={o.customer_name}>{o.customer_name || '—'}</td>
+        <DetailCells o={o} />
         <td className="td font-mono text-sm">{o.coupon_code}</td>
         <AffiliateCell o={o} showId />
         <MoneyCells o={o} showCommission />
@@ -289,8 +310,9 @@ function OrderRow({ o, tab }) {
       <tr className={`tr-hover ${ROW_ACCENT.zoho_affiliate}`}>
         <td className="td font-mono text-sm font-medium">{o.salesorder_number || o.salesorder_id}</td>
         <WcIdCell o={o} />
-        <td className="td text-sm text-gray-600">{fmtDate(o.order_date)}</td>
+        <td className="td text-sm text-gray-600 whitespace-nowrap">{fmtDateTime(o.order_datetime || o.order_date)}</td>
         <td className="td text-sm max-w-[160px] truncate" title={o.customer_name}>{o.customer_name || '—'}</td>
+        <DetailCells o={o} />
         <td className="td font-mono text-sm">{o.coupon_code}</td>
         <AffiliateCell o={o} showId />
         <MoneyCells o={o} />
@@ -306,8 +328,9 @@ function OrderRow({ o, tab }) {
         <td className="td font-mono text-sm font-medium">{o.salesorder_number || o.salesorder_id}</td>
         <WcIdCell o={o} />
         <td className="td"><SourceBadge source={source} /></td>
-        <td className="td text-sm text-gray-600">{fmtDate(o.order_date)}</td>
+        <td className="td text-sm text-gray-600 whitespace-nowrap">{fmtDateTime(o.order_datetime || o.order_date)}</td>
         <td className="td text-sm max-w-[160px] truncate" title={o.customer_name}>{o.customer_name || '—'}</td>
+        <DetailCells o={o} />
         <td className="td font-mono text-sm">{o.coupon_code}</td>
         <AffiliateCell o={o} showId />
         <MoneyCells o={o} showCommission />
@@ -322,8 +345,9 @@ function OrderRow({ o, tab }) {
       <tr className={`tr-hover ${ROW_ACCENT[tab]}`}>
         <td className="td font-mono text-sm font-medium">{o.salesorder_number || o.salesorder_id}</td>
         <WcIdCell o={o} />
-        <td className="td text-sm text-gray-600">{fmtDate(o.order_date)}</td>
+        <td className="td text-sm text-gray-600 whitespace-nowrap">{fmtDateTime(o.order_datetime || o.order_date)}</td>
         <td className="td text-sm max-w-[160px] truncate" title={o.customer_name}>{o.customer_name || '—'}</td>
+        <DetailCells o={o} />
         <td className="td font-mono text-sm">{o.coupon_code || <span className="text-gray-300">—</span>}</td>
         <AffiliateCell o={o} />
         <MoneyCells o={o} />
@@ -339,8 +363,9 @@ function OrderRow({ o, tab }) {
       <td className="td font-mono text-sm font-medium">{o.salesorder_number || o.salesorder_id}</td>
       <WcIdCell o={o} />
       <td className="td"><SegmentBadge segment={seg} /></td>
-      <td className="td text-sm text-gray-600">{fmtDate(o.order_date)}</td>
+      <td className="td text-sm text-gray-600 whitespace-nowrap">{fmtDateTime(o.order_datetime || o.order_date)}</td>
       <td className="td text-sm max-w-[160px] truncate" title={o.customer_name}>{o.customer_name || '—'}</td>
+      <DetailCells o={o} />
       <td className="td font-mono text-sm">{o.coupon_code || <span className="text-gray-300">—</span>}</td>
       <AffiliateCell o={o} />
       <MoneyCells o={o} showCommission />
@@ -601,10 +626,12 @@ export default function Orders() {
           <p className="text-sm font-semibold text-gray-700 mb-2">
             Totals — {selectedAffiliate ? affiliateLabel(selectedAffiliate) : `Affiliate #${affiliateId}`}
           </p>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
             <StatCard label="Orders" value={s.filtered_orders?.toLocaleString()} color="text-navy-700" />
+            <StatCard label="Items sold" value={s.total_items_sold?.toLocaleString()} color="text-slate-600" />
             <StatCard label="Net" value={fmt(s.total_subtotal)} sub="subtotal" color="text-slate-700" />
             <StatCard label="Revenue" value={fmt(s.total_revenue)} sub="order total" color="text-blue-600" />
+            <StatCard label="Net Sales" value={fmt(s.total_net_sales)} sub="product lines" color="text-slate-600" />
             {showCommissionTab && (
               <StatCard label="Est. commission" value={fmt(s.est_commission)} color="text-brand-orange" />
             )}
@@ -647,7 +674,7 @@ export default function Orders() {
               <tr className="border-b">
                 {headers.map((h, i) => (
                   <th key={i} className={`th ${
-                    MONEY_HEADERS.includes(h) ? 'text-right' : h === 'WC Admin' ? 'text-center' : ''}`}>{h}</th>
+                    RIGHT_HEADERS.includes(h) ? 'text-right' : h === 'WC Admin' ? 'text-center' : ''}`}>{h}</th>
                 ))}
               </tr>
             </thead>

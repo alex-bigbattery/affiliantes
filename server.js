@@ -9,6 +9,7 @@ import { pool, initTables } from './db.js'
 import { runSync, lastSync, syncRunning } from './sync.js'
 import { runWooSync, lastWooSync, wooSyncRunning } from './wooSync.js'
 import { runWooOrderSync } from './wooOrderSync.js'
+import { enrichOrderLineItems } from './orderLineItems.js'
 import { refreshWcOrder, refreshWcOrdersBulk, wooConfigured as wooUpdateConfigured } from './wooOrderUpdate.js'
 import { runCouponMapSync } from './couponMapSync.js'
 
@@ -277,6 +278,23 @@ app.get('/api/visits', handle(async req => {
 // SO- = Zoho B2B/quote orders · BB = web/WooCommerce orders · affiliate split by WC link
 const COUPON_EXPR = `LOWER(TRIM(s.raw_json::jsonb->'custom_field_hash'->>'cf_coupon_s'))`
 const VALID_COUPON = `NULLIF(${COUPON_EXPR}, '') IS NOT NULL AND ${COUPON_EXPR} NOT IN ('.','-','n/a','na','none')`
+const LINE_ITEMS_JSON = `COALESCE(s.raw_json::jsonb->'line_items', '[]'::jsonb)`
+const PRODUCT_LINE_FILTER = `
+  COALESCE(li->>'name', '') <> 'Shipping Charge'
+  AND COALESCE(li->>'line_item_type', '') <> 'service'
+  AND NOT COALESCE((li->>'is_component')::boolean, false)
+`
+const NET_SALES_EXPR = `(
+  SELECT COALESCE(SUM((li->>'item_total')::numeric), 0)
+  FROM jsonb_array_elements(${LINE_ITEMS_JSON}) AS li
+  WHERE ${PRODUCT_LINE_FILTER}
+)`
+const ITEMS_SOLD_EXPR = `(
+  SELECT COALESCE(SUM((li->>'quantity')::numeric), 0)::int
+  FROM jsonb_array_elements(${LINE_ITEMS_JSON}) AS li
+  WHERE ${PRODUCT_LINE_FILTER}
+)`
+
 const ORDER_SEGMENT_EXPR = `
   CASE
     WHEN ${VALID_COUPON} AND m.affiliate_id IS NOT NULL AND m.kind = 'affiliate'
@@ -293,13 +311,25 @@ const ORDER_SEGMENT_EXPR = `
 
 app.get('/api/orders/statuses', handle(async () => {
   const { rows } = await pool.query(`
-    SELECT DISTINCT status
-    FROM sales_orders
-    WHERE status IS NOT NULL AND TRIM(status) <> ''
+    SELECT DISTINCT COALESCE(wo.status, s.status) AS status
+    FROM sales_orders s
+    LEFT JOIN wc_orders wo ON wo.order_number_norm = UPPER(TRIM(s.salesorder_number))
+    WHERE COALESCE(wo.status, s.status) IS NOT NULL
+      AND TRIM(COALESCE(wo.status, s.status)) <> ''
     ORDER BY status
   `)
   return rows.map(r => r.status)
 }))
+
+function presentOrder(row) {
+  const lineEnrich = enrichOrderLineItems(row.line_items)
+  const { line_items, ...rest } = row
+  return {
+    ...rest,
+    ...lineEnrich,
+    status: row.display_status || row.status,
+  }
+}
 
 app.get('/api/orders', handle(async req => {
   const {
@@ -312,7 +342,7 @@ app.get('/api/orders', handle(async req => {
 
   if (status) {
     vals.push(status)
-    clauses.push(`o.status = $${vals.length}`)
+    clauses.push(`o.display_status = $${vals.length}`)
   }
   if (search) {
     vals.push(`%${search}%`)
@@ -357,19 +387,38 @@ app.get('/api/orders', handle(async req => {
   const sortDir = String(order).toUpperCase() === 'ASC' ? 'ASC' : 'DESC'
 
   const baseCte = `
-    WITH enriched AS (
+    WITH customer_first AS (
+      SELECT salesorder_id,
+        ROW_NUMBER() OVER (
+          PARTITION BY customer_id
+          ORDER BY order_date ASC NULLS LAST, salesorder_id ASC
+        ) = 1 AS is_new_customer
+      FROM sales_orders
+      WHERE customer_id IS NOT NULL AND TRIM(customer_id) <> ''
+    ),
+    enriched AS (
       SELECT
         s.salesorder_id,
         s.salesorder_number,
         s.order_date,
         s.reference_number,
-        s.status,
+        s.status AS zoho_status,
+        COALESCE(wo.status, s.status) AS display_status,
         s.customer_name,
+        s.customer_id,
         s.salesperson_name,
         s.sub_total,
         s.total,
         s.shipping_charge,
         s.last_modified_time,
+        COALESCE(NULLIF(TRIM(s.raw_json::jsonb->>'created_time'), ''), s.order_date::text) AS order_datetime,
+        ${LINE_ITEMS_JSON} AS line_items,
+        ${NET_SALES_EXPR} AS net_sales,
+        ${ITEMS_SOLD_EXPR} AS items_sold,
+        CASE
+          WHEN cf.is_new_customer THEN 'new'
+          WHEN s.customer_id IS NOT NULL AND TRIM(s.customer_id) <> '' THEN 'returning'
+        END AS customer_type,
         wo.order_id AS wc_order_id,
         NULLIF(${COUPON_EXPR}, '') AS coupon_code,
         m.affiliate_name,
@@ -386,6 +435,7 @@ app.get('/api/orders', handle(async req => {
       FROM sales_orders s
       LEFT JOIN wc_orders wo ON wo.order_number_norm = UPPER(TRIM(s.salesorder_number))
       LEFT JOIN coupon_map m ON m.coupon_code = ${COUPON_EXPR}
+      LEFT JOIN customer_first cf ON cf.salesorder_id = s.salesorder_id
     ),
     filtered AS (SELECT * FROM enriched o ${where})
   `
@@ -412,6 +462,8 @@ app.get('/api/orders', handle(async req => {
         COUNT(*) FILTER (WHERE o.coupon_code IS NOT NULL)::int AS with_coupon,
         COALESCE(SUM(o.total), 0) AS total_revenue,
         COALESCE(SUM(o.sub_total), 0) AS total_subtotal,
+        COALESCE(SUM(o.net_sales), 0) AS total_net_sales,
+        COALESCE(SUM(o.items_sold), 0)::int AS total_items_sold,
         COALESCE(SUM(o.est_commission), 0) AS est_commission
       FROM filtered o
     `, filterVals),
@@ -430,13 +482,15 @@ app.get('/api/orders', handle(async req => {
   const segments = Object.fromEntries(segRows.map(r => [r.segment, r.n]))
 
   return {
-    items: rows,
+    items: rows.map(presentOrder),
     total: countRow.total,
     summary: {
       filtered_orders: sumRow.filtered_orders,
       with_coupon:     sumRow.with_coupon,
       total_revenue:   parseFloat(sumRow.total_revenue),
       total_subtotal:  parseFloat(sumRow.total_subtotal),
+      total_net_sales: parseFloat(sumRow.total_net_sales),
+      total_items_sold: sumRow.total_items_sold,
       est_commission:  parseFloat(sumRow.est_commission),
       so:              segments.so || 0,
       bb:              segments.bb || 0,
