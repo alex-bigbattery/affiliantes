@@ -272,11 +272,26 @@ app.get('/api/visits', handle(async req => {
 }))
 
 // ── ORDERS (Zoho sales_orders in Supabase) ───────────────────────────────────
+// SO- = Zoho B2B/quote orders · BB = web/WooCommerce orders · affiliate split by WC link
 const COUPON_EXPR = `LOWER(TRIM(s.raw_json::jsonb->'custom_field_hash'->>'cf_coupon_s'))`
+const VALID_COUPON = `NULLIF(${COUPON_EXPR}, '') IS NOT NULL AND ${COUPON_EXPR} NOT IN ('.','-','n/a','na','none')`
+const ORDER_SEGMENT_EXPR = `
+  CASE
+    WHEN ${VALID_COUPON} AND m.affiliate_id IS NOT NULL AND m.kind = 'affiliate'
+      THEN 'wc_affiliate'
+    WHEN ${VALID_COUPON} AND m.kind = 'affiliate'
+      THEN 'zoho_affiliate'
+    WHEN s.salesorder_number ILIKE 'BB%'
+      THEN 'bb'
+    WHEN s.salesorder_number ILIKE 'SO%'
+      THEN 'so'
+    ELSE 'other'
+  END
+`
 
 app.get('/api/orders', handle(async req => {
   const {
-    number = 50, offset = 0, search, status, coupon,
+    number = 50, offset = 0, search, status, coupon, segment,
     date_from, date_to, has_coupon, order = 'DESC',
   } = req.query
 
@@ -285,50 +300,46 @@ app.get('/api/orders', handle(async req => {
 
   if (status) {
     vals.push(status)
-    clauses.push(`s.status = $${vals.length}`)
+    clauses.push(`o.status = $${vals.length}`)
   }
   if (search) {
     vals.push(`%${search}%`)
     clauses.push(`(
-      s.salesorder_number ILIKE $${vals.length}
-      OR s.customer_name ILIKE $${vals.length}
-      OR s.reference_number ILIKE $${vals.length}
-      OR ${COUPON_EXPR} ILIKE $${vals.length}
+      o.salesorder_number ILIKE $${vals.length}
+      OR o.customer_name ILIKE $${vals.length}
+      OR o.reference_number ILIKE $${vals.length}
+      OR o.coupon_code ILIKE $${vals.length}
     )`)
   }
   if (coupon) {
     vals.push(String(coupon).toLowerCase().trim())
-    clauses.push(`${COUPON_EXPR} = $${vals.length}`)
+    clauses.push(`o.coupon_code = $${vals.length}`)
+  }
+  if (segment === 'affiliate_coupon') {
+    clauses.push(`o.segment IN ('wc_affiliate', 'zoho_affiliate')`)
+  } else if (segment) {
+    vals.push(segment)
+    clauses.push(`o.segment = $${vals.length}`)
   }
   if (date_from) {
     vals.push(date_from)
-    clauses.push(`s.order_date >= $${vals.length}`)
+    clauses.push(`o.order_date >= $${vals.length}`)
   }
   if (date_to) {
     vals.push(date_to)
-    clauses.push(`s.order_date <= $${vals.length}`)
+    clauses.push(`o.order_date <= $${vals.length}`)
   }
   if (has_coupon === 'true') {
-    clauses.push(`NULLIF(TRIM(s.raw_json::jsonb->'custom_field_hash'->>'cf_coupon_s'),'') IS NOT NULL`)
-    clauses.push(`${COUPON_EXPR} NOT IN ('.', '-', 'n/a', 'na', 'none')`)
+    clauses.push(`o.coupon_code IS NOT NULL`)
   } else if (has_coupon === 'false') {
-    clauses.push(`(
-      NULLIF(TRIM(s.raw_json::jsonb->'custom_field_hash'->>'cf_coupon_s'),'') IS NULL
-      OR ${COUPON_EXPR} IN ('.', '-', 'n/a', 'na', 'none')
-    )`)
+    clauses.push(`o.coupon_code IS NULL`)
   }
 
   const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''
   const sortDir = String(order).toUpperCase() === 'ASC' ? 'ASC' : 'DESC'
 
-  const baseFrom = `
-    FROM sales_orders s
-    LEFT JOIN coupon_map m ON m.coupon_code = ${COUPON_EXPR}
-    ${where}
-  `
-
-  const [{ rows }, { rows: [countRow] }, { rows: [sumRow] }] = await Promise.all([
-    pool.query(`
+  const baseCte = `
+    WITH enriched AS (
       SELECT
         s.salesorder_id,
         s.salesorder_number,
@@ -344,24 +355,59 @@ app.get('/api/orders', handle(async req => {
         NULLIF(${COUPON_EXPR}, '') AS coupon_code,
         m.affiliate_name,
         m.affiliate_id,
-        m.kind AS coupon_kind
+        m.kind AS coupon_kind,
+        m.rate AS coupon_rate,
+        ${ORDER_SEGMENT_EXPR} AS segment,
+        CASE
+          WHEN ${VALID_COUPON} AND m.affiliate_id IS NOT NULL AND m.kind = 'affiliate' THEN 'woocommerce'
+          WHEN ${VALID_COUPON} AND m.kind = 'affiliate' THEN 'zoho'
+        END AS affiliate_source,
+        CASE WHEN m.affiliate_id IS NOT NULL AND m.kind = 'affiliate' AND m.rate IS NOT NULL
+             THEN ROUND((s.sub_total * m.rate / 100.0)::numeric, 2) END AS est_commission
       FROM sales_orders s
       LEFT JOIN coupon_map m ON m.coupon_code = ${COUPON_EXPR}
-      ${where}
-      ORDER BY s.order_date ${sortDir} NULLS LAST, s.salesorder_number ${sortDir}
-      LIMIT $${vals.push(number)} OFFSET $${vals.push(offset)}
-    `, vals),
-    pool.query(`SELECT COUNT(*)::int AS total ${baseFrom}`, vals.slice(0, -2)),
+    ),
+    filtered AS (SELECT * FROM enriched o ${where})
+  `
+
+  const filterVals = [...vals]
+  const pageVals = [...vals, number, offset]
+
+  const affiliateSort = segment === 'affiliate_coupon'
+    ? `CASE o.segment WHEN 'wc_affiliate' THEN 0 WHEN 'zoho_affiliate' THEN 1 ELSE 2 END, `
+    : ''
+
+  const [{ rows }, { rows: [countRow] }, { rows: [sumRow] }, { rows: segRows }] = await Promise.all([
     pool.query(`
+      ${baseCte}
+      SELECT * FROM filtered o
+      ORDER BY ${affiliateSort}o.order_date ${sortDir} NULLS LAST, o.salesorder_number ${sortDir}
+      LIMIT $${filterVals.length + 1} OFFSET $${filterVals.length + 2}
+    `, pageVals),
+    pool.query(`${baseCte} SELECT COUNT(*)::int AS total FROM filtered`, filterVals),
+    pool.query(`
+      ${baseCte}
       SELECT
         COUNT(*)::int AS filtered_orders,
-        COUNT(*) FILTER (WHERE NULLIF(${COUPON_EXPR}, '') IS NOT NULL
-          AND ${COUPON_EXPR} NOT IN ('.', '-', 'n/a', 'na', 'none'))::int AS with_coupon,
-        COALESCE(SUM(s.total), 0) AS total_revenue,
-        COALESCE(SUM(s.sub_total), 0) AS total_subtotal
-      ${baseFrom}
-    `, vals.slice(0, -2)),
+        COUNT(*) FILTER (WHERE o.coupon_code IS NOT NULL)::int AS with_coupon,
+        COALESCE(SUM(o.total), 0) AS total_revenue,
+        COALESCE(SUM(o.sub_total), 0) AS total_subtotal,
+        COALESCE(SUM(o.est_commission), 0) AS est_commission
+      FROM filtered o
+    `, filterVals),
+    pool.query(`
+      WITH enriched AS (
+        SELECT ${ORDER_SEGMENT_EXPR} AS segment
+        FROM sales_orders s
+        LEFT JOIN coupon_map m ON m.coupon_code = ${COUPON_EXPR}
+      )
+      SELECT segment, COUNT(*)::int AS n
+      FROM enriched
+      GROUP BY segment
+    `),
   ])
+
+  const segments = Object.fromEntries(segRows.map(r => [r.segment, r.n]))
 
   return {
     items: rows,
@@ -371,6 +417,13 @@ app.get('/api/orders', handle(async req => {
       with_coupon:     sumRow.with_coupon,
       total_revenue:   parseFloat(sumRow.total_revenue),
       total_subtotal:  parseFloat(sumRow.total_subtotal),
+      est_commission:  parseFloat(sumRow.est_commission),
+      so:              segments.so || 0,
+      bb:              segments.bb || 0,
+      wc_affiliate:    segments.wc_affiliate || 0,
+      zoho_affiliate:  segments.zoho_affiliate || 0,
+      affiliate_coupon: (segments.wc_affiliate || 0) + (segments.zoho_affiliate || 0),
+      other:           segments.other || 0,
     },
     source: 'zoho_sales_orders',
   }
