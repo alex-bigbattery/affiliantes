@@ -15,24 +15,18 @@ function parseRate(v) {
 }
 
 /**
- * Map WooCommerce coupons → coupon_map using AffiliateWP affiliate IDs stored
- * in WC meta (affwp_discount_affiliate). Commission rate prefers AffiliateWP
- * affiliate.rate; falls back to existing coupon_map.rate; then WC percent amount.
+ * Map WooCommerce coupons → coupon_map.
+ * Affiliate link comes from WC meta (affwp_discount_affiliate).
+ * Rate comes ONLY from the WC coupon amount (percent discounts).
  */
 export async function runCouponMapSync({ dryRun = false } = {}) {
   const [wcRes, affRes, mapRes] = await Promise.all([
     pool.query(`SELECT code, amount, discount_type, description, meta_data FROM wc_coupons`),
-    pool.query(`SELECT affiliate_id, display_name, username, email, payment_email, rate FROM awp_affiliates`),
-    pool.query(`SELECT coupon_code, kind, affiliate_name, affiliate_email, affiliate_id, rate, confirmed FROM coupon_map`),
+    pool.query(`SELECT affiliate_id, display_name, username, email, payment_email FROM awp_affiliates`),
+    pool.query(`SELECT coupon_code, kind, affiliate_name, affiliate_email, affiliate_id, rate, confirmed, notes FROM coupon_map`),
   ])
 
   const affById = new Map(affRes.rows.map(a => [a.affiliate_id, a]))
-  const affByEmail = new Map()
-  for (const a of affRes.rows) {
-    for (const e of [a.payment_email, a.email]) {
-      if (e) affByEmail.set(e.toLowerCase(), a)
-    }
-  }
   const existingMap = new Map(mapRes.rows.map(r => [r.coupon_code, r]))
 
   const stats = {
@@ -56,17 +50,7 @@ export async function runCouponMapSync({ dryRun = false } = {}) {
     const wcPercent = w.discount_type === 'percent' ? parseRate(w.amount) : null
 
     let kind
-    let affiliate = null
-    const existing = existingMap.get(code)
-
-    if (affwpId && affById.has(affwpId)) {
-      affiliate = affById.get(affwpId)
-    } else {
-      const emailHint = existing?.affiliate_email?.toLowerCase()
-      if (emailHint && affByEmail.has(emailHint)) {
-        affiliate = affByEmail.get(emailHint)
-      }
-    }
+    let affiliate = affwpId && affById.has(affwpId) ? affById.get(affwpId) : null
 
     if (affiliate || affiliateCheck === '1' || hasAffiliatePress) {
       kind = 'affiliate'
@@ -78,31 +62,17 @@ export async function runCouponMapSync({ dryRun = false } = {}) {
       stats.skipped++
       continue
     }
-    const email = affiliate?.payment_email || affiliate?.email || existing?.affiliate_email || null
-    const name = affiliate?.display_name || affiliate?.username || existing?.affiliate_name || null
-    const affiliateId = affiliate?.affiliate_id ?? existing?.affiliate_id ?? null
 
-    const awpRate = parseRate(affiliate?.rate)
-    let rate
-    if (existing?.confirmed && existing.rate != null) {
-      rate = parseRate(existing.rate)
-    } else if (awpRate != null) {
-      rate = awpRate
-    } else if (existing?.rate != null) {
-      rate = parseRate(existing.rate)
-    } else if (kind === 'affiliate' && wcPercent != null) {
-      rate = wcPercent
-    } else {
-      rate = null
-    }
-
-    const confirmed = kind === 'affiliate'
-      ? !!(existing?.confirmed || (affiliate && awpRate != null))
-      : (existing?.confirmed ?? true)
+    const existing = existingMap.get(code)
+    const email = affiliate?.payment_email || affiliate?.email || null
+    const name = affiliate?.display_name || affiliate?.username || null
+    const affiliateId = affiliate?.affiliate_id ?? null
+    const rate = kind === 'affiliate' && wcPercent != null ? wcPercent : null
+    const confirmed = kind === 'affiliate' ? !!affiliate : true
 
     const notes = !affiliate && kind === 'affiliate'
-      ? (existing?.notes || 'WC affiliate coupon — AffiliateWP ID missing or not synced')
-      : (existing?.notes || null)
+      ? (existing?.notes || 'WC affiliate coupon — no affwp_discount_affiliate in WooCommerce')
+      : null
 
     const row = {
       coupon_code: code,
@@ -115,13 +85,15 @@ export async function runCouponMapSync({ dryRun = false } = {}) {
       notes,
     }
 
-    const changed = !existing
-      || existing.kind !== row.kind
-      || existing.affiliate_id !== row.affiliate_id
-      || (existing.affiliate_email || '') !== (row.affiliate_email || '')
-      || (existing.affiliate_name || '') !== (row.affiliate_name || '')
-      || parseRate(existing.rate) !== row.rate
-      || !!existing.confirmed !== !!row.confirmed
+    const prior = existingMap.get(code)
+    const changed = !prior
+      || prior.kind !== row.kind
+      || prior.affiliate_id !== row.affiliate_id
+      || (prior.affiliate_email || '') !== (row.affiliate_email || '')
+      || (prior.affiliate_name || '') !== (row.affiliate_name || '')
+      || parseRate(prior.rate) !== row.rate
+      || !!prior.confirmed !== !!row.confirmed
+      || (prior.notes || '') !== (row.notes || '')
 
     if (!changed) {
       stats.unchanged++
@@ -136,12 +108,12 @@ export async function runCouponMapSync({ dryRun = false } = {}) {
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW())
         ON CONFLICT (coupon_code) DO UPDATE SET
           kind=EXCLUDED.kind,
-          affiliate_name=COALESCE(EXCLUDED.affiliate_name, coupon_map.affiliate_name),
-          affiliate_email=COALESCE(EXCLUDED.affiliate_email, coupon_map.affiliate_email),
-          affiliate_id=COALESCE(EXCLUDED.affiliate_id, coupon_map.affiliate_id),
+          affiliate_name=EXCLUDED.affiliate_name,
+          affiliate_email=EXCLUDED.affiliate_email,
+          affiliate_id=EXCLUDED.affiliate_id,
           rate=EXCLUDED.rate,
           confirmed=EXCLUDED.confirmed,
-          notes=COALESCE(EXCLUDED.notes, coupon_map.notes),
+          notes=EXCLUDED.notes,
           updated_at=NOW()
       `, [row.coupon_code, row.kind, row.affiliate_name, row.affiliate_email,
           row.affiliate_id, row.rate, row.confirmed, row.notes])

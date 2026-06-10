@@ -10,7 +10,6 @@ const EXPORT_COLUMNS = [
   { header: 'WC status',      value: c => c.wc_status || '' },
   { header: 'Type',           value: c => c.kind },
   { header: 'Affiliate',      value: c => c.affiliate_name || '' },
-  { header: 'Rate %',         value: c => c.rate ?? '' },
   { header: 'WC uses',        value: c => c.wc_usage_count ?? '' },
   { header: 'Zoho orders',    value: c => Number(c.orders || 0) },
   { header: 'Revenue',        value: c => Number(c.revenue || 0) },
@@ -107,10 +106,9 @@ export default function Coupons() {
       <div className="mx-6 mb-4 flex items-start gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
         <Info size={18} className="mt-0.5 shrink-0 text-blue-500" />
         <span>
-          Coupons are synced from <strong>WooCommerce</strong> and auto-mapped to <strong>AffiliateWP</strong>
-          affiliates via WC meta (<code>affwp_discount_affiliate</code>). Commission rates use AffiliateWP
-          when set; otherwise the WC discount %. Revenue comes from <strong>Zoho</strong> orders.
-          Edit with the pencil to override classification or confirm owners.
+          Coupons and rates come from <strong>WooCommerce</strong> only. Affiliates are linked via WC meta
+          (<code>affwp_discount_affiliate</code> → AffiliateWP ID for display). Estimated commission =
+          Zoho subtotal × WC discount %. Revenue from <strong>Zoho</strong> orders.
           {s.unused_in_zoho > 0 && (
             <> <strong>{s.unused_in_zoho}</strong> WooCommerce codes have no Zoho orders yet.</>
           )}
@@ -141,16 +139,16 @@ export default function Coupons() {
           <table className="w-full">
             <thead>
               <tr className="border-b">
-                {['Coupon','Discount','Type','Affiliate','Rate','Orders','Revenue','Est. commission','Last used',''].map((h,i) =>
+                {['Coupon','WC %','Type','Affiliate','Orders','Revenue','Est. commission','Last used',''].map((h,i) =>
                   <th key={i} className={`th ${['Orders','Revenue','Est. commission'].includes(h) ? 'text-right' : ''}`}>{h}</th>
                 )}
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {loading
-                ? <tr><td colSpan={10}><Spinner /></td></tr>
+                ? <tr><td colSpan={9}><Spinner /></td></tr>
                 : filtered.length === 0
-                  ? <tr><td colSpan={10}><Empty label="No coupons" /></td></tr>
+                  ? <tr><td colSpan={9}><Empty label="No coupons" /></td></tr>
                   : filtered.map(c => (
                     <tr key={c.coupon_code} className="tr-hover">
                       <td className="td font-mono font-semibold">
@@ -172,7 +170,6 @@ export default function Coupons() {
                         {c.kind === 'affiliate' && !c.confirmed &&
                           <span className="ml-1.5 text-xs text-amber-600" title="Owner unconfirmed">⚠</span>}
                       </td>
-                      <td className="td text-sm">{c.rate != null ? `${c.rate}%` : <span className="text-gray-300">—</span>}</td>
                       <td className="td text-right text-sm">{c.orders}</td>
                       <td className="td text-right text-sm font-medium">{fmt(c.revenue)}</td>
                       <td className="td text-right text-sm">
