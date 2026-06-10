@@ -187,6 +187,16 @@ export async function initTables() {
     CREATE INDEX IF NOT EXISTS idx_wc_orders_status ON wc_orders(status);
   `)
 
+  await pool.query(`
+    ALTER TABLE wc_orders ADD COLUMN IF NOT EXISTS customer_name TEXT;
+    ALTER TABLE wc_orders ADD COLUMN IF NOT EXISTS total NUMERIC(12,2);
+    ALTER TABLE wc_orders ADD COLUMN IF NOT EXISTS sub_total NUMERIC(12,2);
+    ALTER TABLE wc_orders ADD COLUMN IF NOT EXISTS coupon_code TEXT;
+    ALTER TABLE wc_orders ADD COLUMN IF NOT EXISTS net_sales NUMERIC(12,2);
+    ALTER TABLE wc_orders ADD COLUMN IF NOT EXISTS items_sold INTEGER;
+    ALTER TABLE wc_orders ADD COLUMN IF NOT EXISTS raw JSONB;
+  `).catch(() => {})
+
   // wc_sync_log.orders_synced added after initial deploy
   await pool.query(`
     ALTER TABLE wc_sync_log ADD COLUMN IF NOT EXISTS orders_synced INTEGER DEFAULT 0

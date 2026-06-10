@@ -19,3 +19,25 @@ export function enrichOrderLineItems(lineItems) {
   }).join(', ')
   return { items_sold, net_sales, products_text }
 }
+
+/** WooCommerce REST order line_items (excludes shipping lines). */
+export function wcProductLineItems(items) {
+  if (!Array.isArray(items)) return []
+  return items.filter(li => {
+    const name = String(li?.name || '')
+    return name && !/shipping charge|shipping/i.test(name)
+  })
+}
+
+export function enrichWcLineItems(lineItems) {
+  const products = wcProductLineItems(lineItems)
+  const items_sold = products.reduce((s, li) => s + Number(li.quantity || 0), 0)
+  const net_sales = Math.round(
+    products.reduce((s, li) => s + Number(li.total ?? li.subtotal ?? 0), 0) * 100,
+  ) / 100
+  const products_text = products.map(li => {
+    const label = li.name || li.sku || 'Item'
+    return `${li.quantity}× ${label}`
+  }).join(', ')
+  return { items_sold, net_sales, products_text }
+}

@@ -16,7 +16,8 @@ const SEGMENTS = {
   wc_affiliate:     { label: 'Affiliate Coupon',       short: 'Affiliate coupon linked in WooCommerce → AffiliateWP (commission applies)' },
   zoho_affiliate:   { label: 'Zoho affiliate coupon',  short: 'Affiliate-type coupon on Zoho orders, not linked in WooCommerce' },
   affiliate_coupon: { label: 'All affiliate coupons',  short: 'WC-linked first, then Zoho-only affiliate coupons' },
-  all:              { label: 'All',                    short: 'Every Zoho sales order' },
+  wc_only:          { label: 'WC only (not in Zoho)', short: 'WooCommerce BB orders not yet in Zoho sales_orders — additive, does not change Zoho tabs' },
+  all:              { label: 'All (Zoho)',            short: 'Every Zoho sales order (Aug 2025+)' },
 }
 
 const SEGMENT_COLORS = {
@@ -25,6 +26,7 @@ const SEGMENT_COLORS = {
   wc_affiliate:     '#16a34a',
   zoho_affiliate:   '#9333ea',
   affiliate_coupon: '#059669',
+  wc_only:          '#0ea5e9',
   other:            '#9ca3af',
 }
 
@@ -34,6 +36,7 @@ const SEGMENT_BADGE = {
   wc_affiliate:     'bg-green-100 text-green-800',
   zoho_affiliate:   'bg-purple-100 text-purple-800',
   affiliate_coupon: 'bg-emerald-100 text-emerald-800',
+  wc_only:          'bg-sky-100 text-sky-800',
   other:            'bg-gray-100 text-gray-600',
 }
 
@@ -43,6 +46,7 @@ const ROW_ACCENT = {
   wc_affiliate:     'border-l-4 border-l-green-500',
   zoho_affiliate:   'border-l-4 border-l-purple-500',
   affiliate_coupon: 'border-l-4 border-l-emerald-500',
+  wc_only:          'border-l-4 border-l-sky-500',
   other:            'border-l-4 border-l-gray-300',
 }
 
@@ -74,6 +78,16 @@ const EXPORT_COLUMNS = [
 ]
 
 const RIGHT_HEADERS = ['Net', 'Revenue', 'Net Sales', 'Commission', 'Items sold']
+
+/** Normalize URL/date-picker values to YYYY-MM-DD (handles US M/D/YYYY in bookmarks). */
+function toIsoDate(s) {
+  if (!s) return ''
+  const t = String(s).trim()
+  if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t
+  const us = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
+  if (us) return `${us[3]}-${us[1].padStart(2, '0')}-${us[2].padStart(2, '0')}`
+  return t
+}
 
 function inferSegment(o) {
   if (o.segment) return o.segment
@@ -312,7 +326,7 @@ function tableHeaders(tab) {
   if (tab === 'affiliate_coupon') {
     return ['Order #', 'WC ID', 'Source', 'Date', 'Customer', ...detail, 'Coupon', ...affiliate, ...money(true), 'Status', updateCol]
   }
-  if (tab === 'bb' || tab === 'so') {
+  if (tab === 'bb' || tab === 'so' || tab === 'wc_only') {
     return ['Order #', 'WC ID', 'Date', 'Customer', ...detail, 'Coupon', ...affiliateBasic, ...money(), 'Status', 'Reference', updateCol]
   }
   return ['Order #', 'WC ID', 'Type', 'Date', 'Customer', ...detail, 'Coupon', ...affiliateBasic, ...money(true), 'Status', updateCol]
@@ -375,9 +389,10 @@ function OrderRow({ o, tab }) {
     )
   }
 
-  if (tab === 'bb' || tab === 'so') {
+  if (tab === 'bb' || tab === 'so' || tab === 'wc_only') {
+    const accent = tab === 'wc_only' ? ROW_ACCENT.wc_only : ROW_ACCENT[tab]
     return (
-      <tr className={`tr-hover ${ROW_ACCENT[tab]}`}>
+      <tr className={`tr-hover ${accent}`}>
         <td className="td font-mono text-sm font-medium">{o.salesorder_number || o.salesorder_id}</td>
         <WcIdCell o={o} />
         <td className="td text-sm text-gray-600 whitespace-nowrap">{fmtDateTime(o.order_datetime || o.order_date)}</td>
@@ -387,7 +402,7 @@ function OrderRow({ o, tab }) {
         <AffiliateCell o={o} showEmail showId={false} />
         <MoneyCells o={o} />
         <td className="td text-sm capitalize text-gray-600">{o.status || '—'}</td>
-        <td className="td text-xs text-gray-500 font-mono">{o.reference_number || '—'}</td>
+        <td className="td text-xs text-gray-500 font-mono">{tab === 'wc_only' ? 'WC only' : (o.reference_number || '—')}</td>
         <WcUpdateCell o={o} />
       </tr>
     )
@@ -455,8 +470,8 @@ export default function Orders() {
   const [offset, setOffset]   = useState(0)
   const search   = searchParams.get('q') || ''
   const status   = searchParams.get('status') || ''
-  const dateFrom = searchParams.get('from') || ''
-  const dateTo   = searchParams.get('to') || ''
+  const dateFrom = toIsoDate(searchParams.get('from') || '')
+  const dateTo   = toIsoDate(searchParams.get('to') || '')
   const couponFilter = searchParams.get('coupon') || ''
   const affiliateId = searchParams.get('affiliate') || ''
   const tab      = searchParams.get('tab') || (couponFilter === 'yes' ? 'wc_affiliate' : DEFAULT_TAB)
@@ -469,6 +484,14 @@ export default function Orders() {
   }
 
   const setTab = (key) => setParam('tab', key === DEFAULT_TAB ? '' : key)
+
+  const hasActiveFilters = !!(search || status || dateFrom || dateTo || affiliateId)
+  const clearFilters = () => {
+    const p = new URLSearchParams(searchParams)
+    ;['q', 'status', 'from', 'to', 'affiliate'].forEach(k => p.delete(k))
+    setSearchParams(p)
+    setOffset(0)
+  }
 
   const load = useCallback(() => {
     setLoading(true)
@@ -493,6 +516,19 @@ export default function Orders() {
   }, [search, status, dateFrom, dateTo, tab, couponFilter, affiliateId, offset])
 
   useEffect(() => { load() }, [load])
+
+  useEffect(() => {
+    const rawFrom = searchParams.get('from') || ''
+    const rawTo = searchParams.get('to') || ''
+    const isoFrom = toIsoDate(rawFrom)
+    const isoTo = toIsoDate(rawTo)
+    if ((rawFrom && isoFrom !== rawFrom) || (rawTo && isoTo !== rawTo)) {
+      const p = new URLSearchParams(searchParams)
+      if (rawFrom) p.set('from', isoFrom); else p.delete('from')
+      if (rawTo) p.set('to', isoTo); else p.delete('to')
+      setSearchParams(p, { replace: true })
+    }
+  }, [searchParams, setSearchParams])
 
   useEffect(() => {
     api.affiliates({ number: 500 }).then(d => setAffiliates(Array.isArray(d) ? d : [])).catch(() => {})
@@ -534,6 +570,7 @@ export default function Orders() {
     { key: 'wc_affiliate',     n: s?.wc_affiliate },
     { key: 'zoho_affiliate',   n: s?.zoho_affiliate, hide: !s?.zoho_affiliate },
     { key: 'affiliate_coupon', n: s?.affiliate_coupon },
+    { key: 'wc_only',          n: s?.wc_only, hide: !s?.wc_only },
     { key: 'all',              n: segmentCounts.reduce((n, x) => n + x.value, 0) || s?.filtered_orders },
   ].filter(t => !t.hide)
 
@@ -624,6 +661,7 @@ export default function Orders() {
           <strong> Affiliate Coupon</strong> = linked affiliates only — commission = Net Sales (excl. shipping) × WC discount %.
           <strong> Zoho affiliate coupon</strong> = affiliate-type code on the order but not linked in WooCommerce (no commission).
           SO/BB tabs exclude affiliate-coupon orders.
+          <strong> WC only (not in Zoho)</strong> = BB orders in WooCommerce that are not in Zoho yet — does not change Zoho tab counts.
           La API REST no crea el <strong>referral</strong> en AffiliateWP — usa <strong>Abrir WC</strong> y pulsa Update,
           o el script local <code className="bg-blue-100 px-1 rounded">npm run wc:admin-update</code>.
         </span>
@@ -700,6 +738,12 @@ export default function Orders() {
           <input type="date" className="input" value={dateTo}
             onChange={e => setParam('to', e.target.value)} />
         </label>
+        {hasActiveFilters && (
+          <button type="button" onClick={clearFilters}
+            className="btn-outline text-sm py-2 px-3 self-end">
+            Clear filters
+          </button>
+        )}
       </div>
 
       <div className="px-6 pb-8">

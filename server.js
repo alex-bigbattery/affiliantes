@@ -9,7 +9,7 @@ import { pool, initTables } from './db.js'
 import { runSync, lastSync, syncRunning } from './sync.js'
 import { runWooSync, lastWooSync, wooSyncRunning } from './wooSync.js'
 import { runWooOrderSync } from './wooOrderSync.js'
-import { enrichOrderLineItems } from './orderLineItems.js'
+import { enrichOrderLineItems, enrichWcLineItems } from './orderLineItems.js'
 import { refreshWcOrder, refreshWcOrdersBulk, wooConfigured as wooUpdateConfigured } from './wooOrderUpdate.js'
 import { runCouponMapSync } from './couponMapSync.js'
 
@@ -46,6 +46,23 @@ async function awp(method, endpoint, params = {}, data = null) {
     params, data, timeout: 30000,
   })
   return res.data
+}
+
+/** Accept ISO (YYYY-MM-DD) or US (M/D/YYYY, MM/DD/YYYY) for order_date filters. */
+function normalizeDateParam(raw) {
+  if (raw == null || raw === '') return null
+  const t = String(raw).trim()
+  if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t
+  const us = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
+  if (us) {
+    const [, m, d, y] = us
+    return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`
+  }
+  const parsed = new Date(t)
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed.toISOString().slice(0, 10)
+  }
+  return null
 }
 
 function handle(fn) {
@@ -333,7 +350,185 @@ function presentOrder(row) {
   }
 }
 
+function presentWcOnlyOrder(row) {
+  const fromRaw = row.raw?.line_items ? enrichWcLineItems(row.raw.line_items) : {}
+  return {
+    salesorder_id: `wc-${row.order_id}`,
+    salesorder_number: row.order_number,
+    order_date: row.date_created ? String(row.date_created).slice(0, 10) : null,
+    order_datetime: row.date_created,
+    reference_number: null,
+    customer_name: row.customer_name,
+    sub_total: row.sub_total,
+    total: row.total,
+    status: row.status,
+    display_status: row.status,
+    wc_order_id: row.order_id,
+    coupon_code: row.coupon_code,
+    affiliate_name: row.affiliate_name,
+    affiliate_email: row.affiliate_email,
+    affiliate_id: row.affiliate_id,
+    coupon_kind: row.coupon_kind,
+    est_commission: row.est_commission != null ? parseFloat(row.est_commission) : null,
+    net_sales: row.net_sales != null ? parseFloat(row.net_sales) : fromRaw.net_sales,
+    items_sold: row.items_sold ?? fromRaw.items_sold,
+    products_text: fromRaw.products_text,
+    segment: 'wc_only',
+    order_source: 'woocommerce_only',
+  }
+}
+
+const WC_ONLY_BASE = `
+  WITH wc_unsynced AS (
+    SELECT wo.*
+    FROM wc_orders wo
+    WHERE NOT EXISTS (
+      SELECT 1 FROM sales_orders s
+      WHERE UPPER(TRIM(s.salesorder_number)) = wo.order_number_norm
+    )
+  ),
+  enriched AS (
+    SELECT
+      w.order_id,
+      w.order_number,
+      w.order_number_norm,
+      w.status,
+      w.date_created,
+      w.customer_name,
+      w.total,
+      w.sub_total,
+      w.coupon_code,
+      w.net_sales,
+      w.items_sold,
+      w.raw,
+      w.status AS display_status,
+      m.affiliate_name,
+      COALESCE(NULLIF(TRIM(m.affiliate_email), ''), NULLIF(TRIM(a.payment_email), ''), NULLIF(TRIM(a.email), '')) AS affiliate_email,
+      m.affiliate_id,
+      m.kind AS coupon_kind,
+      m.rate AS coupon_rate,
+      CASE WHEN m.affiliate_id IS NOT NULL AND m.kind = 'affiliate' AND m.rate IS NOT NULL AND w.net_sales IS NOT NULL
+           THEN ROUND((w.net_sales * m.rate / 100.0)::numeric, 2) END AS est_commission
+    FROM wc_unsynced w
+    LEFT JOIN coupon_map m ON m.coupon_code = LOWER(TRIM(w.coupon_code))
+    LEFT JOIN awp_affiliates a ON a.affiliate_id = m.affiliate_id
+  ),
+  filtered AS (SELECT * FROM enriched o)
+`
+
+async function queryWcOnlyOrders(req) {
+  const {
+    number = 50, offset = 0, search, status, coupon, order = 'DESC',
+    date_from, date_to, affiliate_id,
+  } = req.query
+
+  const vals = []
+  const clauses = []
+
+  if (status) {
+    vals.push(status)
+    clauses.push(`o.display_status = $${vals.length}`)
+  }
+  if (search) {
+    vals.push(`%${search}%`)
+    clauses.push(`(
+      o.order_number ILIKE $${vals.length}
+      OR o.customer_name ILIKE $${vals.length}
+      OR o.coupon_code ILIKE $${vals.length}
+    )`)
+  }
+  if (coupon === 'yes' || coupon === 'true') {
+    clauses.push(`o.coupon_code IS NOT NULL`)
+  } else if (coupon) {
+    vals.push(String(coupon).toLowerCase().trim())
+    clauses.push(`o.coupon_code = $${vals.length}`)
+  }
+  const fromDate = normalizeDateParam(date_from)
+  if (fromDate) {
+    vals.push(fromDate)
+    clauses.push(`o.date_created::date >= $${vals.length}::date`)
+  }
+  const toDate = normalizeDateParam(date_to)
+  if (toDate) {
+    vals.push(toDate)
+    clauses.push(`o.date_created::date <= $${vals.length}::date`)
+  }
+  if (affiliate_id) {
+    vals.push(parseInt(affiliate_id, 10))
+    clauses.push(`o.affiliate_id = $${vals.length}`)
+  }
+
+  const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''
+  const sortDir = String(order).toUpperCase() === 'ASC' ? 'ASC' : 'DESC'
+  const baseCte = WC_ONLY_BASE.replace(
+    'filtered AS (SELECT * FROM enriched o)',
+    `filtered AS (SELECT * FROM enriched o ${where})`,
+  )
+  const filterVals = [...vals]
+  const pageVals = [...vals, number, offset]
+
+  const [{ rows }, { rows: [countRow] }, { rows: [sumRow] }, { rows: [wcOnlyRow] }] = await Promise.all([
+    pool.query(`
+      ${baseCte}
+      SELECT * FROM filtered o
+      ORDER BY o.date_created ${sortDir} NULLS LAST, o.order_number ${sortDir}
+      LIMIT $${filterVals.length + 1} OFFSET $${filterVals.length + 2}
+    `, pageVals),
+    pool.query(`${baseCte} SELECT COUNT(*)::int AS total FROM filtered`, filterVals),
+    pool.query(`
+      ${baseCte}
+      SELECT
+        COUNT(*)::int AS filtered_orders,
+        COUNT(*) FILTER (WHERE o.coupon_code IS NOT NULL)::int AS with_coupon,
+        COALESCE(SUM(o.total), 0) AS total_revenue,
+        COALESCE(SUM(o.sub_total), 0) AS total_subtotal,
+        COALESCE(SUM(o.net_sales), 0) AS total_net_sales,
+        COALESCE(SUM(o.items_sold), 0)::int AS total_items_sold,
+        COALESCE(SUM(o.est_commission), 0) AS est_commission
+      FROM filtered o
+    `, filterVals),
+    pool.query(`
+      SELECT COUNT(*)::int AS n FROM wc_orders wo
+      WHERE NOT EXISTS (
+        SELECT 1 FROM sales_orders s
+        WHERE UPPER(TRIM(s.salesorder_number)) = wo.order_number_norm
+      )
+    `),
+  ])
+
+  return {
+    items: rows.map(presentWcOnlyOrder),
+    total: countRow.total,
+    summary: {
+      filtered_orders: sumRow.filtered_orders,
+      with_coupon: sumRow.with_coupon,
+      total_revenue: parseFloat(sumRow.total_revenue),
+      total_subtotal: parseFloat(sumRow.total_subtotal),
+      total_net_sales: parseFloat(sumRow.total_net_sales),
+      total_items_sold: sumRow.total_items_sold,
+      est_commission: parseFloat(sumRow.est_commission),
+      wc_only: wcOnlyRow.n,
+    },
+    source: 'woocommerce_only',
+  }
+}
+
+async function wcOnlyCount() {
+  const { rows: [row] } = await pool.query(`
+    SELECT COUNT(*)::int AS n FROM wc_orders wo
+    WHERE NOT EXISTS (
+      SELECT 1 FROM sales_orders s
+      WHERE UPPER(TRIM(s.salesorder_number)) = wo.order_number_norm
+    )
+  `)
+  return row?.n || 0
+}
+
 app.get('/api/orders', handle(async req => {
+  if (req.query.segment === 'wc_only') {
+    return queryWcOnlyOrders(req)
+  }
+
   const {
     number = 50, offset = 0, search, status, coupon, segment,
     date_from, date_to, has_coupon, order = 'DESC', affiliate_id,
@@ -367,13 +562,15 @@ app.get('/api/orders', handle(async req => {
     vals.push(segment)
     clauses.push(`o.segment = $${vals.length}`)
   }
-  if (date_from) {
-    vals.push(date_from)
-    clauses.push(`o.order_date >= $${vals.length}`)
+  const fromDate = normalizeDateParam(date_from)
+  if (fromDate) {
+    vals.push(fromDate)
+    clauses.push(`o.order_date::date >= $${vals.length}::date`)
   }
-  if (date_to) {
-    vals.push(date_to)
-    clauses.push(`o.order_date <= $${vals.length}`)
+  const toDate = normalizeDateParam(date_to)
+  if (toDate) {
+    vals.push(toDate)
+    clauses.push(`o.order_date::date <= $${vals.length}::date`)
   }
   if (has_coupon === 'true') {
     clauses.push(`o.coupon_code IS NOT NULL`)
@@ -451,7 +648,7 @@ app.get('/api/orders', handle(async req => {
     ? `CASE o.segment WHEN 'wc_affiliate' THEN 0 WHEN 'zoho_affiliate' THEN 1 ELSE 2 END, `
     : ''
 
-  const [{ rows }, { rows: [countRow] }, { rows: [sumRow] }, { rows: segRows }] = await Promise.all([
+  const [{ rows }, { rows: [countRow] }, { rows: [sumRow] }, { rows: segRows }, wcOnlyTotal] = await Promise.all([
     pool.query(`
       ${baseCte}
       SELECT * FROM filtered o
@@ -481,6 +678,7 @@ app.get('/api/orders', handle(async req => {
       FROM enriched
       GROUP BY segment
     `),
+    wcOnlyCount(),
   ])
 
   const segments = Object.fromEntries(segRows.map(r => [r.segment, r.n]))
@@ -502,6 +700,7 @@ app.get('/api/orders', handle(async req => {
       zoho_affiliate:  segments.zoho_affiliate || 0,
       affiliate_coupon: (segments.wc_affiliate || 0) + (segments.zoho_affiliate || 0),
       other:           segments.other || 0,
+      wc_only:         wcOnlyTotal,
     },
     source: 'zoho_sales_orders',
   }
