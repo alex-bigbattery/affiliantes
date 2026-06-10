@@ -130,6 +130,47 @@ export async function initTables() {
       key   TEXT PRIMARY KEY,
       value TEXT
     );
+
+    -- WooCommerce coupons (synced from /wp-json/wc/v3/coupons)
+    CREATE TABLE IF NOT EXISTS wc_coupons (
+      coupon_id            INTEGER PRIMARY KEY,
+      code                   TEXT NOT NULL,
+      code_normalized        TEXT NOT NULL,
+      status                 TEXT,
+      discount_type          TEXT,
+      amount                 NUMERIC(12,2) DEFAULT 0,
+      description            TEXT,
+      date_created           TIMESTAMPTZ,
+      date_modified          TIMESTAMPTZ,
+      date_expires           TIMESTAMPTZ,
+      usage_count            INTEGER DEFAULT 0,
+      usage_limit            INTEGER,
+      usage_limit_per_user   INTEGER,
+      individual_use         BOOLEAN DEFAULT FALSE,
+      free_shipping          BOOLEAN DEFAULT FALSE,
+      minimum_amount         NUMERIC(12,2) DEFAULT 0,
+      maximum_amount         NUMERIC(12,2) DEFAULT 0,
+      product_ids            JSONB,
+      excluded_product_ids   JSONB,
+      product_categories     JSONB,
+      email_restrictions     JSONB,
+      used_by                JSONB,
+      meta_data              JSONB,
+      raw                    JSONB,
+      synced_at              TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_wc_coupons_code ON wc_coupons(code_normalized);
+    CREATE INDEX IF NOT EXISTS idx_wc_coupons_status ON wc_coupons(status);
+
+    CREATE TABLE IF NOT EXISTS wc_sync_log (
+      id              SERIAL PRIMARY KEY,
+      started_at      TIMESTAMPTZ DEFAULT NOW(),
+      finished_at     TIMESTAMPTZ,
+      status          TEXT DEFAULT 'running',
+      coupons_synced  INTEGER DEFAULT 0,
+      error           TEXT
+    );
   `)
   console.log('  ✔ Supabase tables ready')
   await seedCouponMap()

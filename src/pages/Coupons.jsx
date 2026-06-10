@@ -6,10 +6,13 @@ import ExportButtons from '../components/ExportButtons'
 
 const EXPORT_COLUMNS = [
   { header: 'Coupon',         value: c => c.coupon_code },
+  { header: 'WC discount',    value: c => formatDiscount(c) },
+  { header: 'WC status',      value: c => c.wc_status || '' },
   { header: 'Type',           value: c => c.kind },
   { header: 'Affiliate',      value: c => c.affiliate_name || '' },
   { header: 'Rate %',         value: c => c.rate ?? '' },
-  { header: 'Orders',         value: c => Number(c.orders || 0) },
+  { header: 'WC uses',        value: c => c.wc_usage_count ?? '' },
+  { header: 'Zoho orders',    value: c => Number(c.orders || 0) },
   { header: 'Revenue',        value: c => Number(c.revenue || 0) },
   { header: 'Subtotal',       value: c => Number(c.subtotal || 0) },
   { header: 'Est. commission', value: c => c.est_commission != null ? Number(c.est_commission) : '' },
@@ -17,6 +20,14 @@ const EXPORT_COLUMNS = [
   { header: 'First order',    value: c => c.first_order ? String(c.first_order).slice(0, 10) : '' },
   { header: 'Last order',     value: c => c.last_order ? String(c.last_order).slice(0, 10) : '' },
 ]
+
+function formatDiscount(c) {
+  if (c.discount_amount == null) return ''
+  const amt = Number(c.discount_amount)
+  if (c.discount_type === 'percent') return `${amt}%`
+  if (c.discount_type === 'fixed_cart' || c.discount_type === 'fixed_product') return `$${amt}`
+  return String(amt)
+}
 
 const KIND_META = {
   affiliate:    { label: 'Affiliate',    cls: 'bg-green-100 text-green-700' },
@@ -70,7 +81,7 @@ export default function Coupons() {
     <div>
       <PageHeader
         title="Coupons"
-        subtitle="Real coupon usage from Zoho orders (cf_coupon_s field)"
+        subtitle="WooCommerce catalog synced to Supabase + Zoho order usage (cf_coupon_s)"
         actions={
           <ExportButtons baseName="coupons" sheetName="Coupons" columns={EXPORT_COLUMNS} rows={filtered} />
         }
@@ -81,8 +92,8 @@ export default function Coupons() {
       {/* Summary cards */}
       {s && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 px-6 mb-4">
-          <StatCard label="Codes used" value={s.total_codes}
-            sub={`${s.total_orders} orders`} />
+          <StatCard label="Total codes" value={s.total_codes}
+            sub={`${s.woocommerce_codes ?? '—'} in WooCommerce`} />
           <StatCard label="Affiliate coupons" value={s.affiliate_codes}
             sub={`${s.unclassified} unclassified`} color="text-green-600" />
           <StatCard label="Affiliate revenue" value={fmt(s.affiliate_revenue)}
@@ -96,9 +107,12 @@ export default function Coupons() {
       <div className="mx-6 mb-4 flex items-start gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
         <Info size={18} className="mt-0.5 shrink-0 text-blue-500" />
         <span>
-          AffiliateWP doesn't expose coupons via API, so this data comes straight from your Zoho orders.
-          Estimated commission = subtotal × affiliate rate. Edit the classification with the pencil to
-          assign an owner and rate to <strong>unclassified</strong> coupons.
+          All coupons are synced from <strong>WooCommerce</strong> into Supabase. Order revenue comes from
+          <strong> Zoho</strong> (cf_coupon_s). Estimated commission = subtotal × affiliate rate.
+          Edit the classification with the pencil to assign an owner and rate to <strong>unclassified</strong> coupons.
+          {s.unused_in_zoho > 0 && (
+            <> <strong>{s.unused_in_zoho}</strong> WooCommerce codes have no Zoho orders yet.</>
+          )}
         </span>
       </div>
 
@@ -126,20 +140,30 @@ export default function Coupons() {
           <table className="w-full">
             <thead>
               <tr className="border-b">
-                {['Coupon','Type','Affiliate','Rate','Orders','Revenue','Est. commission','Last used',''].map((h,i) =>
+                {['Coupon','Discount','Type','Affiliate','Rate','Orders','Revenue','Est. commission','Last used',''].map((h,i) =>
                   <th key={i} className={`th ${['Orders','Revenue','Est. commission'].includes(h) ? 'text-right' : ''}`}>{h}</th>
                 )}
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {loading
-                ? <tr><td colSpan={9}><Spinner /></td></tr>
+                ? <tr><td colSpan={10}><Spinner /></td></tr>
                 : filtered.length === 0
-                  ? <tr><td colSpan={9}><Empty label="No coupons" /></td></tr>
+                  ? <tr><td colSpan={10}><Empty label="No coupons" /></td></tr>
                   : filtered.map(c => (
                     <tr key={c.coupon_code} className="tr-hover">
-                      <td className="td font-mono font-semibold flex items-center gap-1.5">
-                        <Tag size={13} className="text-gray-400" />{c.coupon_code}
+                      <td className="td font-mono font-semibold">
+                        <div className="flex items-center gap-1.5">
+                          <Tag size={13} className="text-gray-400 shrink-0" />
+                          <span>{c.coupon_code}</span>
+                          {c.in_woocommerce && !c.in_zoho_orders &&
+                            <span className="text-[10px] uppercase tracking-wide text-gray-400 font-sans">WC only</span>}
+                        </div>
+                      </td>
+                      <td className="td text-sm text-gray-600">
+                        {c.discount_amount != null
+                          ? formatDiscount(c)
+                          : <span className="text-gray-300">—</span>}
                       </td>
                       <td className="td"><KindBadge kind={c.kind} /></td>
                       <td className="td text-sm">

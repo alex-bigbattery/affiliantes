@@ -69,6 +69,10 @@ export const api = {
   // Sync
   syncStatus: () => get('/sync/status'),
   runSync:    () => post('/sync/run'),
+  runWooSync: () => post('/sync/woo/run'),
+
+  // WooCommerce catalog (Supabase)
+  wooCoupons: (p) => get('/woocommerce/coupons', p),
 }
 
 export function fmt(n) {

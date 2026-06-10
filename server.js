@@ -7,6 +7,7 @@ import fs from 'fs'
 import { fileURLToPath } from 'url'
 import { pool, initTables } from './db.js'
 import { runSync, lastSync, syncRunning } from './sync.js'
+import { runWooSync, lastWooSync, wooSyncRunning } from './wooSync.js'
 
 config()
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -57,10 +58,16 @@ function handle(fn) {
 // ── SYNC STATUS ──────────────────────────────────────────────────────────────
 app.get('/api/sync/status', async (_req, res) => {
   try {
-    const { rows } = await pool.query(
-      `SELECT * FROM awp_sync_log ORDER BY id DESC LIMIT 5`
-    )
-    res.json({ running: syncRunning, last: lastSync, log: rows })
+    const [awp, woo] = await Promise.all([
+      pool.query(`SELECT * FROM awp_sync_log ORDER BY id DESC LIMIT 5`),
+      pool.query(`SELECT * FROM wc_sync_log ORDER BY id DESC LIMIT 5`),
+    ])
+    res.json({
+      running: syncRunning,
+      last: lastSync,
+      log: awp.rows,
+      woo: { running: wooSyncRunning, last: lastWooSync, log: woo.rows },
+    })
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
@@ -69,6 +76,29 @@ app.post('/api/sync/run', async (_req, res) => {
   runSync().catch(console.error)
   res.json({ message: 'Sync started' })
 })
+
+app.post('/api/sync/woo/run', async (_req, res) => {
+  if (wooSyncRunning) return res.json({ message: 'WooCommerce sync already running' })
+  runWooSync().catch(console.error)
+  res.json({ message: 'WooCommerce coupon sync started' })
+})
+
+app.get('/api/woocommerce/coupons', handle(async req => {
+  const { status, search, number = 200, offset = 0 } = req.query
+  let q = `SELECT * FROM wc_coupons`
+  const vals = []
+  const clauses = []
+  if (status) { vals.push(status); clauses.push(`status = $${vals.length}`) }
+  if (search) {
+    vals.push(`%${search}%`)
+    clauses.push(`(code ILIKE $${vals.length} OR description ILIKE $${vals.length})`)
+  }
+  if (clauses.length) q += ' WHERE ' + clauses.join(' AND ')
+  q += ` ORDER BY code_normalized LIMIT $${vals.push(number)} OFFSET $${vals.push(offset)}`
+  const { rows } = await pool.query(q, vals)
+  const { rows: [countRow] } = await pool.query(`SELECT COUNT(*)::int AS total FROM wc_coupons`)
+  return { items: rows, total: countRow.total, source: 'woocommerce' }
+}))
 
 // ── AFFILIATES (read from Supabase) ─────────────────────────────────────────
 app.get('/api/affiliates', handle(async req => {
@@ -274,32 +304,56 @@ app.get('/api/coupons', handle(async () => {
         AND LOWER(TRIM(raw_json::jsonb->'custom_field_hash'->>'cf_coupon_s'))
             NOT IN ('.', '-', 'n/a', 'na', 'none')
       GROUP BY 1
+    ),
+    catalog AS (
+      SELECT code_normalized AS coupon, code AS wc_code, coupon_id, status AS wc_status,
+             discount_type, amount AS discount_amount, description AS wc_description,
+             usage_count AS wc_usage_count, usage_limit, date_expires, date_created AS wc_created
+      FROM wc_coupons
+    ),
+    codes AS (
+      SELECT coupon FROM usage
+      UNION
+      SELECT coupon FROM catalog
     )
     SELECT
-      u.coupon AS coupon_code, u.orders, u.revenue, u.subtotal,
+      c.coupon AS coupon_code,
+      COALESCE(u.orders, 0) AS orders,
+      COALESCE(u.revenue, 0) AS revenue,
+      COALESCE(u.subtotal, 0) AS subtotal,
       u.first_order, u.last_order,
+      cat.wc_code, cat.coupon_id, cat.wc_status, cat.discount_type, cat.discount_amount,
+      cat.wc_description, cat.wc_usage_count, cat.usage_limit, cat.date_expires, cat.wc_created,
       COALESCE(m.kind, 'unclassified') AS kind,
       m.affiliate_name, m.affiliate_email, m.affiliate_id, m.rate,
       COALESCE(m.confirmed, false) AS confirmed, m.notes,
       CASE WHEN m.rate IS NOT NULL
-           THEN ROUND((u.subtotal * m.rate / 100.0)::numeric, 2) END AS est_commission
-    FROM usage u
-    LEFT JOIN coupon_map m ON m.coupon_code = u.coupon
-    ORDER BY u.revenue DESC NULLS LAST
+           THEN ROUND((COALESCE(u.subtotal, 0) * m.rate / 100.0)::numeric, 2) END AS est_commission,
+      (cat.coupon IS NOT NULL) AS in_woocommerce,
+      (u.coupon IS NOT NULL) AS in_zoho_orders
+    FROM codes c
+    LEFT JOIN usage u ON u.coupon = c.coupon
+    LEFT JOIN catalog cat ON cat.coupon = c.coupon
+    LEFT JOIN coupon_map m ON m.coupon_code = c.coupon
+    ORDER BY COALESCE(u.revenue, 0) DESC NULLS LAST, cat.wc_code ASC NULLS LAST
   `)
 
+  const { rows: [wcCount] } = await pool.query(`SELECT COUNT(*)::int AS n FROM wc_coupons`)
+
   const summary = {
-    total_codes:     rows.length,
-    affiliate_codes: rows.filter(r => r.kind === 'affiliate').length,
-    promo_codes:     rows.filter(r => r.kind === 'promo').length,
-    unclassified:    rows.filter(r => r.kind === 'unclassified').length,
-    total_orders:    rows.reduce((s, r) => s + Number(r.orders), 0),
-    total_revenue:   rows.reduce((s, r) => s + Number(r.revenue || 0), 0),
+    total_codes:       rows.length,
+    woocommerce_codes: wcCount.n,
+    affiliate_codes:   rows.filter(r => r.kind === 'affiliate').length,
+    promo_codes:       rows.filter(r => r.kind === 'promo').length,
+    unclassified:      rows.filter(r => r.kind === 'unclassified').length,
+    unused_in_zoho:    rows.filter(r => r.in_woocommerce && !r.in_zoho_orders).length,
+    total_orders:      rows.reduce((s, r) => s + Number(r.orders), 0),
+    total_revenue:     rows.reduce((s, r) => s + Number(r.revenue || 0), 0),
     affiliate_revenue: rows.filter(r => r.kind === 'affiliate').reduce((s, r) => s + Number(r.revenue || 0), 0),
-    est_commission:  rows.reduce((s, r) => s + Number(r.est_commission || 0), 0),
+    est_commission:    rows.reduce((s, r) => s + Number(r.est_commission || 0), 0),
   }
 
-  const data = { items: rows, summary, source: 'zoho_sales_orders' }
+  const data = { items: rows, summary, source: 'woocommerce+zoho' }
   couponCache = { data, ts: Date.now() }
   return data
 }))
@@ -520,9 +574,12 @@ async function start() {
   await initTables()
   app.listen(PORT, () => console.log(`\n  ⚡ Affiliate Dashboard API → http://localhost:${PORT}\n`))
   console.log('  🔄 Running initial sync...')
-  await runSync()
+  await Promise.all([runSync(), runWooSync()])
   console.log(`  ⏰ Auto-sync every ${SYNC_MS / 60000} minutes`)
-  setInterval(() => runSync().catch(console.error), SYNC_MS)
+  setInterval(() => {
+    runSync().catch(console.error)
+    runWooSync().catch(console.error)
+  }, SYNC_MS)
 }
 
 start().catch(e => { console.error('Fatal startup error:', e); process.exit(1) })

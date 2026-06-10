@@ -17,11 +17,11 @@ export default function Sync() {
 
   const triggerSync = async () => {
     setTriggering(true)
-    await api.runSync()
+    await Promise.all([api.runSync(), api.runWooSync()])
     setTimeout(() => { load(); setTriggering(false) }, 1500)
   }
 
-  const running = info?.running || triggering
+  const running = info?.running || info?.woo?.running || triggering
 
   const fmt = iso => iso
     ? new Date(iso).toLocaleString('en-US', { dateStyle: 'short', timeStyle: 'medium' })
@@ -37,7 +37,7 @@ export default function Sync() {
     <div>
       <PageHeader
         title="Supabase Sync"
-        subtitle="AffiliateWP data is copied to your database every 30 minutes"
+        subtitle="AffiliateWP + WooCommerce coupons are copied to Supabase every 30 minutes"
         actions={
           <button
             onClick={triggerSync}
@@ -69,11 +69,24 @@ export default function Sync() {
           ))}
         </div>
 
+        <div className="card px-5 py-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="text-sm font-semibold text-gray-900">WooCommerce coupons</div>
+            <div className="text-xs text-gray-500 mt-0.5">
+              Last sync: {fmt(info?.woo?.last?.finished_at)}
+              {info?.woo?.last?.coupons != null && ` · ${info.woo.last.coupons} codes`}
+            </div>
+          </div>
+          <div className="text-2xl font-bold text-navy-700">
+            {info?.woo?.last?.coupons ?? '—'}
+          </div>
+        </div>
+
         {/* Sync log */}
         <div className="card">
           <div className="px-5 py-4 border-b flex items-center gap-2">
             <Database size={16} className="text-gray-400" />
-            <h2 className="font-semibold text-gray-900">Sync history</h2>
+            <h2 className="font-semibold text-gray-900">AffiliateWP sync history</h2>
           </div>
           {loading ? (
             <div className="p-8 text-center text-gray-400 text-sm">Loading…</div>
@@ -131,7 +144,7 @@ export default function Sync() {
         <div className="card px-5 py-4 bg-blue-50 border-blue-100">
           <h3 className="font-semibold text-blue-900 text-sm mb-2">How it works</h3>
           <ul className="text-sm text-blue-800 space-y-1 list-disc list-inside">
-            <li>The backend copies all AffiliateWP data to Supabase on startup and every 30 minutes</li>
+            <li>The backend copies AffiliateWP data and WooCommerce coupons to Supabase on startup and every 30 minutes</li>
             <li>All read queries go to Supabase (no API limits)</li>
             <li>Edits (create/update/delete) go to AffiliateWP and then update Supabase</li>
             <li>You can force an immediate sync with the "Sync now" button</li>
