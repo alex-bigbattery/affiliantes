@@ -433,7 +433,7 @@ app.get('/api/orders', handle(async req => {
           WHEN ${VALID_COUPON} AND m.kind = 'affiliate' THEN 'zoho'
         END AS affiliate_source,
         CASE WHEN m.affiliate_id IS NOT NULL AND m.kind = 'affiliate' AND m.rate IS NOT NULL
-             THEN ROUND((${NET_SALES_EXPR}) * m.rate / 100.0)::numeric, 2) END AS est_commission
+             THEN ROUND(((${NET_SALES_EXPR}) * m.rate / 100.0)::numeric, 2) END AS est_commission
       FROM sales_orders s
       LEFT JOIN wc_orders wo ON wo.order_number_norm = UPPER(TRIM(s.salesorder_number))
       LEFT JOIN coupon_map m ON m.coupon_code = ${COUPON_EXPR}

@@ -110,7 +110,7 @@ const { rows: orders } = await pool.query(`
     m.affiliate_id,
     m.rate AS coupon_rate,
     wo.order_id AS wc_order_id,
-    ROUND((${NET_SALES}) * m.rate / 100.0)::numeric, 2) AS est_commission
+    ROUND(((${NET_SALES}) * m.rate / 100.0)::numeric, 2) AS est_commission
   FROM sales_orders s
   JOIN wc_orders wo ON wo.order_number_norm = UPPER(TRIM(s.salesorder_number))
   LEFT JOIN coupon_map m ON m.coupon_code = ${COUPON}
