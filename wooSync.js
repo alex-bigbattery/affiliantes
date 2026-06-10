@@ -1,6 +1,7 @@
 import axios from 'axios'
 import { config } from 'dotenv'
 import { pool } from './db.js'
+import { runCouponMapSync } from './couponMapSync.js'
 
 config()
 
@@ -134,6 +135,8 @@ export async function runWooSync() {
     const coupons = await fetchAllCoupons()
     count = await upsertCoupons(coupons)
     console.log(`    ✔ ${count} WooCommerce coupons saved to Supabase`)
+    const map = await runCouponMapSync()
+    console.log(`    ✔ Coupon map updated (${map.stats.mapped} coupons linked to affiliates)`)
   } catch (e) {
     error = e.response?.data?.message || e.message || String(e)
     console.error('  ✗ WooCommerce sync error:', error)

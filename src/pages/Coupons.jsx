@@ -107,9 +107,10 @@ export default function Coupons() {
       <div className="mx-6 mb-4 flex items-start gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
         <Info size={18} className="mt-0.5 shrink-0 text-blue-500" />
         <span>
-          All coupons are synced from <strong>WooCommerce</strong> into Supabase. Order revenue comes from
-          <strong> Zoho</strong> (cf_coupon_s). Estimated commission = subtotal × affiliate rate.
-          Edit the classification with the pencil to assign an owner and rate to <strong>unclassified</strong> coupons.
+          Coupons are synced from <strong>WooCommerce</strong> and auto-mapped to <strong>AffiliateWP</strong>
+          affiliates via WC meta (<code>affwp_discount_affiliate</code>). Commission rates use AffiliateWP
+          when set; otherwise the WC discount %. Revenue comes from <strong>Zoho</strong> orders.
+          Edit with the pencil to override classification or confirm owners.
           {s.unused_in_zoho > 0 && (
             <> <strong>{s.unused_in_zoho}</strong> WooCommerce codes have no Zoho orders yet.</>
           )}

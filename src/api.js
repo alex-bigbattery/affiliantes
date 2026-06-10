@@ -70,6 +70,7 @@ export const api = {
   syncStatus: () => get('/sync/status'),
   runSync:    () => post('/sync/run'),
   runWooSync: () => post('/sync/woo/run'),
+  runCouponMapSync: () => post('/sync/coupon-map/run'),
 
   // WooCommerce catalog (Supabase)
   wooCoupons: (p) => get('/woocommerce/coupons', p),

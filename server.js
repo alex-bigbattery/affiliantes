@@ -8,6 +8,7 @@ import { fileURLToPath } from 'url'
 import { pool, initTables } from './db.js'
 import { runSync, lastSync, syncRunning } from './sync.js'
 import { runWooSync, lastWooSync, wooSyncRunning } from './wooSync.js'
+import { runCouponMapSync } from './couponMapSync.js'
 
 config()
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -79,9 +80,16 @@ app.post('/api/sync/run', async (_req, res) => {
 
 app.post('/api/sync/woo/run', async (_req, res) => {
   if (wooSyncRunning) return res.json({ message: 'WooCommerce sync already running' })
-  runWooSync().catch(console.error)
+  runWooSync()
+    .then(() => runCouponMapSync().catch(console.error))
+    .catch(console.error)
   res.json({ message: 'WooCommerce coupon sync started' })
 })
+
+app.post('/api/sync/coupon-map/run', handle(async () => {
+  couponCache = null
+  return runCouponMapSync()
+}))
 
 app.get('/api/woocommerce/coupons', handle(async req => {
   const { status, search, number = 200, offset = 0 } = req.query
