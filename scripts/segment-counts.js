@@ -1,8 +1,7 @@
 import { config } from 'dotenv'
-import axios from 'axios'
-config()
-// quick local segment check via SQL
 import { pool } from '../db.js'
+
+config()
 
 const { rows } = await pool.query(`
   WITH usage AS (
