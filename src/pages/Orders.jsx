@@ -114,23 +114,19 @@ function WcIdCell({ o }) {
   )
 }
 
-function WcUpdateCell({ o, onUpdate, updatingId, updateResult }) {
+function WcUpdateCell({ o }) {
   if (!o.wc_order_id) {
     return <td className="td text-center"><span className="text-gray-300">—</span></td>
   }
-  const busy = updatingId === o.wc_order_id
-  const result = updateResult?.[o.wc_order_id]
+  const adminUrl = `${WC_ADMIN_ORDER}${o.wc_order_id}`
   return (
     <td className="td text-center whitespace-nowrap">
-      <button type="button" onClick={() => onUpdate(o.wc_order_id)} disabled={busy || !onUpdate}
-        className="btn-outline px-2.5 py-1 text-xs font-medium disabled:opacity-50"
-        title="Re-save in WooCommerce (wp-admin Update)">
-        {busy
-          ? <><RefreshCw size={12} className="animate-spin inline mr-1" />Updating…</>
-          : 'Update'}
-      </button>
-      {result === 'ok' && <div className="text-[10px] text-green-600 mt-0.5">Updated</div>}
-      {result === 'error' && <div className="text-[10px] text-red-600 mt-0.5">Failed</div>}
+      <a href={adminUrl} target="_blank" rel="noopener noreferrer"
+        className="btn-primary inline-block px-2.5 py-1 text-xs font-medium"
+        title="Abrir en WooCommerce wp-admin → click Update (crea referral AffiliateWP)">
+        Abrir WC
+      </a>
+      <div className="text-[10px] text-gray-400 mt-0.5">luego Update</div>
     </td>
   )
 }
@@ -146,7 +142,7 @@ function SourceBadge({ source }) {
 }
 
 function tableHeaders(tab) {
-  const updateCol = 'Update'
+  const updateCol = 'WC Admin'
   if (tab === 'wc_affiliate') {
     return ['Order #', 'WC ID', 'Date', 'Customer', 'Coupon', 'Affiliate', 'AWP ID', 'Subtotal', 'Total', 'Commission', 'Status', updateCol]
   }
@@ -162,7 +158,7 @@ function tableHeaders(tab) {
   return ['Order #', 'WC ID', 'Type', 'Date', 'Customer', 'Coupon', 'Affiliate', 'Subtotal', 'Total', 'Commission', 'Status', updateCol]
 }
 
-function OrderRow({ o, tab, onWcUpdate, updatingWcId, wcUpdateResult }) {
+function OrderRow({ o, tab }) {
   const seg = inferSegment(o)
   const source = inferSource(o)
   const accent = ROW_ACCENT[seg] || ROW_ACCENT.other
@@ -184,7 +180,7 @@ function OrderRow({ o, tab, onWcUpdate, updatingWcId, wcUpdateResult }) {
         <td className="td text-right text-sm font-medium">{fmt(o.total)}</td>
         <td className="td text-right text-sm">{commission}</td>
         <td className="td text-sm capitalize text-gray-600">{o.status || '—'}</td>
-        <WcUpdateCell o={o} onUpdate={onWcUpdate} updatingId={updatingWcId} updateResult={wcUpdateResult} />
+        <WcUpdateCell o={o} />
       </tr>
     )
   }
@@ -200,7 +196,7 @@ function OrderRow({ o, tab, onWcUpdate, updatingWcId, wcUpdateResult }) {
         <td className="td text-right text-sm">{fmt(o.sub_total)}</td>
         <td className="td text-right text-sm font-medium">{fmt(o.total)}</td>
         <td className="td text-sm capitalize text-gray-600">{o.status || '—'}</td>
-        <WcUpdateCell o={o} onUpdate={onWcUpdate} updatingId={updatingWcId} updateResult={wcUpdateResult} />
+        <WcUpdateCell o={o} />
       </tr>
     )
   }
@@ -220,7 +216,7 @@ function OrderRow({ o, tab, onWcUpdate, updatingWcId, wcUpdateResult }) {
         <td className="td text-right text-sm font-medium">{fmt(o.total)}</td>
         <td className="td text-right text-sm">{commission}</td>
         <td className="td text-sm capitalize text-gray-600">{o.status || '—'}</td>
-        <WcUpdateCell o={o} onUpdate={onWcUpdate} updatingId={updatingWcId} updateResult={wcUpdateResult} />
+        <WcUpdateCell o={o} />
       </tr>
     )
   }
@@ -237,7 +233,7 @@ function OrderRow({ o, tab, onWcUpdate, updatingWcId, wcUpdateResult }) {
         <td className="td text-right text-sm font-medium">{fmt(o.total)}</td>
         <td className="td text-sm capitalize text-gray-600">{o.status || '—'}</td>
         <td className="td text-xs text-gray-500 font-mono">{o.reference_number || '—'}</td>
-        <WcUpdateCell o={o} onUpdate={onWcUpdate} updatingId={updatingWcId} updateResult={wcUpdateResult} />
+        <WcUpdateCell o={o} />
       </tr>
     )
   }
@@ -255,7 +251,7 @@ function OrderRow({ o, tab, onWcUpdate, updatingWcId, wcUpdateResult }) {
       <td className="td text-right text-sm font-medium">{fmt(o.total)}</td>
       <td className="td text-right text-sm">{commission}</td>
       <td className="td text-sm capitalize text-gray-600">{o.status || '—'}</td>
-      <WcUpdateCell o={o} onUpdate={onWcUpdate} updatingId={updatingWcId} updateResult={wcUpdateResult} />
+      <WcUpdateCell o={o} />
     </tr>
   )
 }
@@ -301,10 +297,6 @@ export default function Orders() {
   const [loading, setLoading] = useState(true)
   const [error, setError]     = useState(null)
   const [offset, setOffset]   = useState(0)
-  const [updatingWcId, setUpdatingWcId] = useState(null)
-  const [wcUpdateResult, setWcUpdateResult] = useState({}) // wc_order_id → 'ok' | 'error'
-  const [bulkWc, setBulkWc]   = useState(null) // { running, done, total, ok, failed, errors }
-
   const search   = searchParams.get('q') || ''
   const status   = searchParams.get('status') || ''
   const dateFrom = searchParams.get('from') || ''
@@ -346,65 +338,6 @@ export default function Orders() {
 
   const showWcBulk = tab === 'wc_affiliate' || tab === 'affiliate_coupon'
 
-  const updateOneWc = async (wcOrderId) => {
-    setUpdatingWcId(wcOrderId)
-    setWcUpdateResult(prev => ({ ...prev, [wcOrderId]: undefined }))
-    setError(null)
-    try {
-      await api.wcUpdateOrder(wcOrderId)
-      setWcUpdateResult(prev => ({ ...prev, [wcOrderId]: 'ok' }))
-    } catch (e) {
-      setWcUpdateResult(prev => ({ ...prev, [wcOrderId]: 'error' }))
-      setError(`WC #${wcOrderId}: ${e.message}`)
-    } finally {
-      setUpdatingWcId(null)
-    }
-  }
-
-  const runBulkWcUpdate = async () => {
-    const segment = tab === 'affiliate_coupon' ? 'affiliate_coupon' : 'wc_affiliate'
-    const { ids, total } = await api.ordersWcIds({ segment })
-    const withIds = (ids || []).filter(Boolean)
-    if (!withIds.length) {
-      setError('No WooCommerce order IDs found for this tab')
-      return
-    }
-    if (!window.confirm(
-      `Update ${withIds.length} orders in WooCommerce?\n\n` +
-      'This re-saves each order (same as opening wp-admin and clicking Update) to trigger AffiliateWP hooks.'
-    )) return
-
-    setBulkWc({ running: true, done: 0, total: withIds.length, ok: 0, failed: 0, errors: [] })
-    setError(null)
-
-    const CHUNK = 10
-    let ok = 0
-    let failed = 0
-    const errors = []
-
-    try {
-      for (let i = 0; i < withIds.length; i += CHUNK) {
-        const chunk = withIds.slice(i, i + CHUNK)
-        const res = await api.wcBulkUpdate({ ids: chunk })
-        ok += res.ok?.length || 0
-        failed += res.failed?.length || 0
-        if (res.failed?.length) errors.push(...res.failed)
-        setBulkWc({
-          running: true,
-          done: Math.min(i + chunk.length, withIds.length),
-          total: withIds.length,
-          ok,
-          failed,
-          errors,
-        })
-      }
-      setBulkWc({ running: false, done: withIds.length, total: withIds.length, ok, failed, errors })
-    } catch (e) {
-      setError(e.message)
-      setBulkWc(prev => prev ? { ...prev, running: false } : null)
-    }
-  }
-
   const s = data.summary
   const apiHasSegments = s != null && (s.so != null || s.wc_affiliate != null)
   const page = Math.floor(offset / PAGE_SIZE) + 1
@@ -445,13 +378,9 @@ export default function Orders() {
         actions={
           <div className="flex flex-wrap items-center gap-2">
             {showWcBulk && (
-              <button type="button" className="btn-primary text-sm" onClick={runBulkWcUpdate}
-                disabled={bulkWc?.running}>
-                <RefreshCw size={15} className={bulkWc?.running ? 'animate-spin inline mr-1.5' : 'inline mr-1.5'} />
-                {bulkWc?.running
-                  ? `Updating ${bulkWc.done}/${bulkWc.total}…`
-                  : `Update all in WooCommerce (${s?.wc_affiliate ?? '…'})`}
-              </button>
+              <span className="text-xs text-gray-500 max-w-xs" title="Plan B — corre en tu PC">
+                Auto: <code className="bg-gray-100 px-1 rounded">npm run wc:admin-update</code>
+              </span>
             )}
             <ExportButtons baseName={`orders-${tab}`} sheetName="Orders" columns={EXPORT_COLUMNS} rows={exportRows} />
           </div>
@@ -459,25 +388,6 @@ export default function Orders() {
       />
 
       {error && <ErrorMsg error={error} />}
-
-      {bulkWc && (
-        <div className={`mx-6 mb-4 rounded-lg border px-4 py-3 text-sm ${
-          bulkWc.running ? 'border-blue-200 bg-blue-50 text-blue-900' :
-          bulkWc.failed ? 'border-amber-200 bg-amber-50 text-amber-900' :
-          'border-green-200 bg-green-50 text-green-900'}`}>
-          {bulkWc.running
-            ? <>Updating WooCommerce orders: <strong>{bulkWc.done}/{bulkWc.total}</strong> (wp-admin Update equivalent)…</>
-            : <>Done: <strong>{bulkWc.ok}</strong> updated{bulkWc.failed > 0 && <>, <strong>{bulkWc.failed}</strong> failed</>}</>}
-          {bulkWc.errors?.length > 0 && (
-            <ul className="mt-2 text-xs list-disc pl-4">
-              {bulkWc.errors.slice(0, 5).map((e, i) => (
-                <li key={i}>WC #{e.wc_order_id}: {e.error}</li>
-              ))}
-              {bulkWc.errors.length > 5 && <li>…and {bulkWc.errors.length - 5} more</li>}
-            </ul>
-          )}
-        </div>
-      )}
 
       {!apiHasSegments && !loading && (
         <div className="mx-6 mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
@@ -545,7 +455,8 @@ export default function Orders() {
           <strong> Affiliate Coupon</strong> = linked affiliates only — commission = subtotal × WC discount %.
           <strong> Zoho affiliate coupon</strong> = affiliate-type code on the order but not linked in WooCommerce (no commission).
           SO/BB tabs exclude affiliate-coupon orders.
-          Use <strong>Update all in WooCommerce</strong> to re-save each order (same as wp-admin Update).
+          La API REST no crea el <strong>referral</strong> en AffiliateWP — usa <strong>Abrir WC</strong> y pulsa Update,
+          o el script local <code className="bg-blue-100 px-1 rounded">npm run wc:admin-update</code>.
         </span>
       </div>
 
@@ -601,7 +512,7 @@ export default function Orders() {
               <tr className="border-b">
                 {headers.map((h, i) => (
                   <th key={i} className={`th ${
-                    ['Subtotal', 'Total', 'Commission'].includes(h) ? 'text-right' : h === 'Update' ? 'text-center' : ''}`}>{h}</th>
+                    ['Subtotal', 'Total', 'Commission'].includes(h) ? 'text-right' : h === 'WC Admin' ? 'text-center' : ''}`}>{h}</th>
                 ))}
               </tr>
             </thead>
@@ -611,8 +522,7 @@ export default function Orders() {
                 : data.items.length === 0
                   ? <tr><td colSpan={headers.length}><Empty label={`No ${SEGMENTS[tab]?.label?.toLowerCase() || 'orders'}`} /></td></tr>
                   : data.items.map(o => (
-                    <OrderRow key={o.salesorder_id} o={o} tab={tab}
-                      onWcUpdate={updateOneWc} updatingWcId={updatingWcId} wcUpdateResult={wcUpdateResult} />
+                    <OrderRow key={o.salesorder_id} o={o} tab={tab} />
                   ))
               }
             </tbody>

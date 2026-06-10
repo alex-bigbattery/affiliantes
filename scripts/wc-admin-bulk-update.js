@@ -1,9 +1,11 @@
 /**
- * Browser automation: open each WC order in wp-admin and click Update.
- * Requires: npm install playwright && npx playwright install chromium
- * Env: WP_ADMIN_USER, WP_ADMIN_PASSWORD (add to .env)
- * Usage: node scripts/wc-admin-bulk-update.js [wc_order_id ...]
- *        node scripts/wc-admin-bulk-update.js   (all affiliate-coupon orders from DB)
+ * Plan B — browser automation: wp-admin → order edit → click Update.
+ * Triggers AffiliateWP referral creation (REST API re-save does NOT).
+ *
+ * Env (.env): WP_ADMIN_USER, WP_ADMIN_PASSWORD
+ * Usage:
+ *   node scripts/wc-admin-bulk-update.js 215823        (one order — test)
+ *   node scripts/wc-admin-bulk-update.js               (all affiliate-coupon orders)
  */
 import { config } from 'dotenv'
 import { pool } from '../db.js'
@@ -13,10 +15,11 @@ config()
 const WP_USER = process.env.WP_ADMIN_USER
 const WP_PASS = process.env.WP_ADMIN_PASSWORD
 const WOO_BASE = (process.env.WOO_STORE_URL || 'https://bigbattery.com').replace(/\/+$/, '')
-const DELAY_MS = parseInt(process.env.WC_ADMIN_DELAY_MS || '2500', 10)
+const DELAY_MS = parseInt(process.env.WC_ADMIN_DELAY_MS || '3000', 10)
+const HEADLESS = process.env.WC_ADMIN_HEADLESS === 'true'
 
 if (!WP_USER || !WP_PASS) {
-  console.error('Set WP_ADMIN_USER and WP_ADMIN_PASSWORD in .env')
+  console.error('Add to .env:\n  WP_ADMIN_USER=your_wp_username\n  WP_ADMIN_PASSWORD=your_wp_password')
   process.exit(1)
 }
 
@@ -24,7 +27,7 @@ let chromium
 try {
   ({ chromium } = await import('playwright'))
 } catch {
-  console.error('Install Playwright first: npm install playwright && npx playwright install chromium')
+  console.error('Run: npm install playwright && npx playwright install chromium')
   process.exit(1)
 }
 
@@ -35,7 +38,7 @@ async function loadIds() {
   const COUPON = `LOWER(TRIM(s.raw_json::jsonb->'custom_field_hash'->>'cf_coupon_s'))`
   const VALID = `NULLIF(${COUPON}, '') IS NOT NULL AND ${COUPON} NOT IN ('.','-','n/a','na','none')`
   const { rows } = await pool.query(`
-    SELECT DISTINCT wo.order_id AS wc_order_id
+    SELECT DISTINCT wo.order_id AS wc_order_id, s.salesorder_number
     FROM sales_orders s
     JOIN wc_orders wo ON wo.order_number_norm = UPPER(TRIM(s.salesorder_number))
     LEFT JOIN coupon_map m ON m.coupon_code = ${COUPON}
@@ -47,38 +50,77 @@ async function loadIds() {
 }
 
 async function login(page) {
-  await page.goto(`${WOO_BASE}/wp-admin/`, { waitUntil: 'domcontentloaded' })
+  await page.goto(`${WOO_BASE}/wp-login.php`, { waitUntil: 'domcontentloaded' })
   if (await page.locator('#wpadminbar').count()) return
+
   await page.fill('#user_login', WP_USER)
   await page.fill('#user_pass', WP_PASS)
   await page.click('#wp-submit')
-  await page.waitForSelector('#wpadminbar', { timeout: 30000 })
+  await page.waitForSelector('#wpadminbar', { timeout: 45000 })
+  console.log('  ✔ Logged in to wp-admin')
+}
+
+async function readReferralHint(page) {
+  const selectors = [
+    '#affiliatewp-order-referral',
+    '[id*="affwp"]',
+    '.affwp-order-referral',
+    'text=/referral/i',
+  ]
+  for (const sel of selectors) {
+    const el = page.locator(sel).first()
+    if (await el.count()) {
+      const text = (await el.innerText().catch(() => '')).trim().slice(0, 200)
+      if (text) return text
+    }
+  }
+  return null
 }
 
 async function clickUpdate(page) {
-  const selectors = [
-    '.order_actions button.button-primary',
-    'button.save-action',
-    '#post button.button-primary',
-    'button:has-text("Update")',
-    'input#publish',
-    '#publish',
+  // WooCommerce HPOS order edit — blue Update in Order actions
+  await page.waitForTimeout(1200)
+
+  const candidates = [
+    () => page.getByRole('button', { name: /^Update$/i }).first(),
+    () => page.locator('.order_actions button.button-primary').first(),
+    () => page.locator('button.save-action').first(),
+    () => page.locator('#woocommerce-order-actions button.button-primary').first(),
+    () => page.locator('button:has-text("Update")').first(),
   ]
-  for (const sel of selectors) {
-    const btn = page.locator(sel).first()
-    if (await btn.count()) {
+
+  for (const getBtn of candidates) {
+    const btn = getBtn()
+    if (await btn.count() && await btn.isVisible().catch(() => false)) {
+      await btn.scrollIntoViewIfNeeded()
       await btn.click()
-      return sel
+      return 'Update button'
     }
   }
-  throw new Error('Update button not found')
+  throw new Error('Update button not found on order page')
+}
+
+async function updateOrder(page, id) {
+  const url = `${WOO_BASE}/wp-admin/admin.php?page=wc-orders&action=edit&id=${id}`
+  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 90000 })
+  await page.waitForSelector('body.wp-admin', { timeout: 30000 })
+
+  const title = await page.locator('h1, .woocommerce-layout__header-heading').first().innerText().catch(() => '')
+  const before = await readReferralHint(page)
+
+  await clickUpdate(page)
+  await page.waitForTimeout(DELAY_MS)
+
+  const after = await readReferralHint(page)
+  return { id, title: title.trim(), referralBefore: before, referralAfter: after }
 }
 
 const ids = await loadIds()
-console.log(`Will update ${ids.length} WooCommerce orders in wp-admin…`)
+console.log(`Plan B: ${ids.length} order(s) — wp-admin Update (AffiliateWP referral)\n`)
 
-const browser = await chromium.launch({ headless: false, slowMo: 50 })
-const page = await browser.newPage()
+const browser = await chromium.launch({ headless: HEADLESS, slowMo: 80 })
+const context = await browser.newContext()
+const page = await context.newPage()
 await login(page)
 
 const ok = []
@@ -86,20 +128,20 @@ const failed = []
 
 for (let i = 0; i < ids.length; i++) {
   const id = ids[i]
-  const url = `${WOO_BASE}/wp-admin/admin.php?page=wc-orders&action=edit&id=${id}`
-  process.stdout.write(`\r  ${i + 1}/${ids.length} WC #${id}…`)
+  process.stdout.write(`\n[${i + 1}/${ids.length}] WC #${id} `)
   try {
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 })
-    await page.waitForTimeout(800)
-    const used = await clickUpdate(page)
-    await page.waitForTimeout(DELAY_MS)
-    ok.push({ id, selector: used })
+    const result = await updateOrder(page, id)
+    ok.push(result)
+    console.log(`✔ ${result.title || 'saved'}`)
+    if (result.referralAfter) console.log(`   Referral: ${result.referralAfter.slice(0, 120)}`)
+    else if (!result.referralBefore) console.log('   ⚠ No referral text visible yet — check AffiliateWP box manually')
   } catch (e) {
     failed.push({ id, error: e.message })
+    console.log(`✗ ${e.message}`)
   }
 }
 
-console.log(`\n✔ ${ok.length} updated, ${failed.length} failed`)
+console.log(`\n── Summary: ${ok.length} ok, ${failed.length} failed`)
 if (failed.length) console.table(failed)
 
 await browser.close()
