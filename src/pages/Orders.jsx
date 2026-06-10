@@ -106,19 +106,31 @@ function WcOrderId({ id }) {
   )
 }
 
-function WcIdCell({ o, onUpdate, updatingId }) {
+function WcIdCell({ o }) {
   return (
     <td className="td font-mono text-sm">
-      <div className="flex items-center gap-1">
-        <WcOrderId id={o.wc_order_id} />
-        {o.wc_order_id && onUpdate && (
-          <button type="button" onClick={() => onUpdate(o.wc_order_id)} disabled={updatingId === o.wc_order_id}
-            className="btn-ghost px-1 py-0.5 text-gray-400 hover:text-navy-700 disabled:opacity-40"
-            title="Update in WooCommerce (same as wp-admin Update button)">
-            <RefreshCw size={13} className={updatingId === o.wc_order_id ? 'animate-spin' : ''} />
-          </button>
-        )}
-      </div>
+      <WcOrderId id={o.wc_order_id} />
+    </td>
+  )
+}
+
+function WcUpdateCell({ o, onUpdate, updatingId, updateResult }) {
+  if (!o.wc_order_id) {
+    return <td className="td text-center"><span className="text-gray-300">—</span></td>
+  }
+  const busy = updatingId === o.wc_order_id
+  const result = updateResult?.[o.wc_order_id]
+  return (
+    <td className="td text-center whitespace-nowrap">
+      <button type="button" onClick={() => onUpdate(o.wc_order_id)} disabled={busy || !onUpdate}
+        className="btn-outline px-2.5 py-1 text-xs font-medium disabled:opacity-50"
+        title="Re-save in WooCommerce (wp-admin Update)">
+        {busy
+          ? <><RefreshCw size={12} className="animate-spin inline mr-1" />Updating…</>
+          : 'Update'}
+      </button>
+      {result === 'ok' && <div className="text-[10px] text-green-600 mt-0.5">Updated</div>}
+      {result === 'error' && <div className="text-[10px] text-red-600 mt-0.5">Failed</div>}
     </td>
   )
 }
@@ -134,22 +146,23 @@ function SourceBadge({ source }) {
 }
 
 function tableHeaders(tab) {
+  const updateCol = 'Update'
   if (tab === 'wc_affiliate') {
-    return ['Order #', 'WC ID', 'Date', 'Customer', 'Coupon', 'Affiliate', 'AWP ID', 'Subtotal', 'Total', 'Commission', 'Status']
+    return ['Order #', 'WC ID', 'Date', 'Customer', 'Coupon', 'Affiliate', 'AWP ID', 'Subtotal', 'Total', 'Commission', 'Status', updateCol]
   }
   if (tab === 'zoho_affiliate') {
-    return ['Order #', 'WC ID', 'Date', 'Customer', 'Coupon', 'Subtotal', 'Total', 'Status']
+    return ['Order #', 'WC ID', 'Date', 'Customer', 'Coupon', 'Subtotal', 'Total', 'Status', updateCol]
   }
   if (tab === 'affiliate_coupon') {
-    return ['Order #', 'WC ID', 'Source', 'Date', 'Customer', 'Coupon', 'Affiliate', 'AWP ID', 'Subtotal', 'Total', 'Commission', 'Status']
+    return ['Order #', 'WC ID', 'Source', 'Date', 'Customer', 'Coupon', 'Affiliate', 'AWP ID', 'Subtotal', 'Total', 'Commission', 'Status', updateCol]
   }
   if (tab === 'bb' || tab === 'so') {
-    return ['Order #', 'WC ID', 'Date', 'Customer', 'Coupon', 'Subtotal', 'Total', 'Status', 'Reference']
+    return ['Order #', 'WC ID', 'Date', 'Customer', 'Coupon', 'Subtotal', 'Total', 'Status', 'Reference', updateCol]
   }
-  return ['Order #', 'WC ID', 'Type', 'Date', 'Customer', 'Coupon', 'Affiliate', 'Subtotal', 'Total', 'Commission', 'Status']
+  return ['Order #', 'WC ID', 'Type', 'Date', 'Customer', 'Coupon', 'Affiliate', 'Subtotal', 'Total', 'Commission', 'Status', updateCol]
 }
 
-function OrderRow({ o, tab, onWcUpdate, updatingWcId }) {
+function OrderRow({ o, tab, onWcUpdate, updatingWcId, wcUpdateResult }) {
   const seg = inferSegment(o)
   const source = inferSource(o)
   const accent = ROW_ACCENT[seg] || ROW_ACCENT.other
@@ -161,7 +174,7 @@ function OrderRow({ o, tab, onWcUpdate, updatingWcId }) {
     return (
       <tr className={`tr-hover ${ROW_ACCENT.wc_affiliate}`}>
         <td className="td font-mono text-sm font-medium">{o.salesorder_number || o.salesorder_id}</td>
-        <WcIdCell o={o} onUpdate={onWcUpdate} updatingId={updatingWcId} />
+        <WcIdCell o={o} />
         <td className="td text-sm text-gray-600">{fmtDate(o.order_date)}</td>
         <td className="td text-sm max-w-[160px] truncate" title={o.customer_name}>{o.customer_name || '—'}</td>
         <td className="td font-mono text-sm">{o.coupon_code}</td>
@@ -171,6 +184,7 @@ function OrderRow({ o, tab, onWcUpdate, updatingWcId }) {
         <td className="td text-right text-sm font-medium">{fmt(o.total)}</td>
         <td className="td text-right text-sm">{commission}</td>
         <td className="td text-sm capitalize text-gray-600">{o.status || '—'}</td>
+        <WcUpdateCell o={o} onUpdate={onWcUpdate} updatingId={updatingWcId} updateResult={wcUpdateResult} />
       </tr>
     )
   }
@@ -179,13 +193,14 @@ function OrderRow({ o, tab, onWcUpdate, updatingWcId }) {
     return (
       <tr className={`tr-hover ${ROW_ACCENT.zoho_affiliate}`}>
         <td className="td font-mono text-sm font-medium">{o.salesorder_number || o.salesorder_id}</td>
-        <WcIdCell o={o} onUpdate={onWcUpdate} updatingId={updatingWcId} />
+        <WcIdCell o={o} />
         <td className="td text-sm text-gray-600">{fmtDate(o.order_date)}</td>
         <td className="td text-sm max-w-[160px] truncate" title={o.customer_name}>{o.customer_name || '—'}</td>
         <td className="td font-mono text-sm">{o.coupon_code}</td>
         <td className="td text-right text-sm">{fmt(o.sub_total)}</td>
         <td className="td text-right text-sm font-medium">{fmt(o.total)}</td>
         <td className="td text-sm capitalize text-gray-600">{o.status || '—'}</td>
+        <WcUpdateCell o={o} onUpdate={onWcUpdate} updatingId={updatingWcId} updateResult={wcUpdateResult} />
       </tr>
     )
   }
@@ -194,7 +209,7 @@ function OrderRow({ o, tab, onWcUpdate, updatingWcId }) {
     return (
       <tr className={`tr-hover ${accent}`}>
         <td className="td font-mono text-sm font-medium">{o.salesorder_number || o.salesorder_id}</td>
-        <WcIdCell o={o} onUpdate={onWcUpdate} updatingId={updatingWcId} />
+        <WcIdCell o={o} />
         <td className="td"><SourceBadge source={source} /></td>
         <td className="td text-sm text-gray-600">{fmtDate(o.order_date)}</td>
         <td className="td text-sm max-w-[160px] truncate" title={o.customer_name}>{o.customer_name || '—'}</td>
@@ -205,6 +220,7 @@ function OrderRow({ o, tab, onWcUpdate, updatingWcId }) {
         <td className="td text-right text-sm font-medium">{fmt(o.total)}</td>
         <td className="td text-right text-sm">{commission}</td>
         <td className="td text-sm capitalize text-gray-600">{o.status || '—'}</td>
+        <WcUpdateCell o={o} onUpdate={onWcUpdate} updatingId={updatingWcId} updateResult={wcUpdateResult} />
       </tr>
     )
   }
@@ -213,7 +229,7 @@ function OrderRow({ o, tab, onWcUpdate, updatingWcId }) {
     return (
       <tr className={`tr-hover ${ROW_ACCENT[tab]}`}>
         <td className="td font-mono text-sm font-medium">{o.salesorder_number || o.salesorder_id}</td>
-        <WcIdCell o={o} onUpdate={onWcUpdate} updatingId={updatingWcId} />
+        <WcIdCell o={o} />
         <td className="td text-sm text-gray-600">{fmtDate(o.order_date)}</td>
         <td className="td text-sm max-w-[160px] truncate" title={o.customer_name}>{o.customer_name || '—'}</td>
         <td className="td font-mono text-sm">{o.coupon_code || <span className="text-gray-300">—</span>}</td>
@@ -221,6 +237,7 @@ function OrderRow({ o, tab, onWcUpdate, updatingWcId }) {
         <td className="td text-right text-sm font-medium">{fmt(o.total)}</td>
         <td className="td text-sm capitalize text-gray-600">{o.status || '—'}</td>
         <td className="td text-xs text-gray-500 font-mono">{o.reference_number || '—'}</td>
+        <WcUpdateCell o={o} onUpdate={onWcUpdate} updatingId={updatingWcId} updateResult={wcUpdateResult} />
       </tr>
     )
   }
@@ -228,7 +245,7 @@ function OrderRow({ o, tab, onWcUpdate, updatingWcId }) {
   return (
     <tr className={`tr-hover ${accent}`}>
       <td className="td font-mono text-sm font-medium">{o.salesorder_number || o.salesorder_id}</td>
-      <WcIdCell o={o} onUpdate={onWcUpdate} updatingId={updatingWcId} />
+      <WcIdCell o={o} />
       <td className="td"><SegmentBadge segment={seg} /></td>
       <td className="td text-sm text-gray-600">{fmtDate(o.order_date)}</td>
       <td className="td text-sm max-w-[160px] truncate" title={o.customer_name}>{o.customer_name || '—'}</td>
@@ -238,6 +255,7 @@ function OrderRow({ o, tab, onWcUpdate, updatingWcId }) {
       <td className="td text-right text-sm font-medium">{fmt(o.total)}</td>
       <td className="td text-right text-sm">{commission}</td>
       <td className="td text-sm capitalize text-gray-600">{o.status || '—'}</td>
+      <WcUpdateCell o={o} onUpdate={onWcUpdate} updatingId={updatingWcId} updateResult={wcUpdateResult} />
     </tr>
   )
 }
@@ -284,6 +302,7 @@ export default function Orders() {
   const [error, setError]     = useState(null)
   const [offset, setOffset]   = useState(0)
   const [updatingWcId, setUpdatingWcId] = useState(null)
+  const [wcUpdateResult, setWcUpdateResult] = useState({}) // wc_order_id → 'ok' | 'error'
   const [bulkWc, setBulkWc]   = useState(null) // { running, done, total, ok, failed, errors }
 
   const search   = searchParams.get('q') || ''
@@ -329,10 +348,13 @@ export default function Orders() {
 
   const updateOneWc = async (wcOrderId) => {
     setUpdatingWcId(wcOrderId)
+    setWcUpdateResult(prev => ({ ...prev, [wcOrderId]: undefined }))
     setError(null)
     try {
       await api.wcUpdateOrder(wcOrderId)
+      setWcUpdateResult(prev => ({ ...prev, [wcOrderId]: 'ok' }))
     } catch (e) {
+      setWcUpdateResult(prev => ({ ...prev, [wcOrderId]: 'error' }))
       setError(`WC #${wcOrderId}: ${e.message}`)
     } finally {
       setUpdatingWcId(null)
@@ -579,7 +601,7 @@ export default function Orders() {
               <tr className="border-b">
                 {headers.map((h, i) => (
                   <th key={i} className={`th ${
-                    ['Subtotal', 'Total', 'Commission'].includes(h) ? 'text-right' : ''}`}>{h}</th>
+                    ['Subtotal', 'Total', 'Commission'].includes(h) ? 'text-right' : h === 'Update' ? 'text-center' : ''}`}>{h}</th>
                 ))}
               </tr>
             </thead>
@@ -590,7 +612,7 @@ export default function Orders() {
                   ? <tr><td colSpan={headers.length}><Empty label={`No ${SEGMENTS[tab]?.label?.toLowerCase() || 'orders'}`} /></td></tr>
                   : data.items.map(o => (
                     <OrderRow key={o.salesorder_id} o={o} tab={tab}
-                      onWcUpdate={showWcBulk ? updateOneWc : null} updatingWcId={updatingWcId} />
+                      onWcUpdate={updateOneWc} updatingWcId={updatingWcId} wcUpdateResult={wcUpdateResult} />
                   ))
               }
             </tbody>
