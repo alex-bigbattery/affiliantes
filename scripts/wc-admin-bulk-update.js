@@ -16,6 +16,7 @@ const WP_USER = process.env.WP_ADMIN_USER
 const WP_PASS = process.env.WP_ADMIN_PASSWORD
 const WOO_BASE = (process.env.WOO_STORE_URL || 'https://bigbattery.com').replace(/\/+$/, '')
 const DELAY_MS = parseInt(process.env.WC_ADMIN_DELAY_MS || '3000', 10)
+const PRE_UPDATE_DELAY_MS = parseInt(process.env.WC_ADMIN_PRE_UPDATE_DELAY_MS || '10000', 10)
 const HEADLESS = process.env.WC_ADMIN_HEADLESS === 'true'
 
 if (!WP_USER || !WP_PASS) {
@@ -60,26 +61,52 @@ async function login(page) {
   console.log('  ✔ Logged in to wp-admin')
 }
 
-async function readReferralHint(page) {
+async function readAffiliateBox(page) {
   const selectors = [
     '#affiliatewp-order-referral',
-    '[id*="affwp"]',
+    '#affwp-order-referral',
     '.affwp-order-referral',
-    'text=/referral/i',
+    '[id*="affwp"]',
+    'text=/AffiliateWP/i',
   ]
   for (const sel of selectors) {
     const el = page.locator(sel).first()
     if (await el.count()) {
-      const text = (await el.innerText().catch(() => '')).trim().slice(0, 200)
-      if (text) return text
+      return (await el.innerText().catch(() => '')).trim()
     }
+  }
+  return ''
+}
+
+/** Kunal: affiliate name must load before Update — 10s total is enough. */
+async function waitForAffiliateName(page) {
+  const waitMs = parseInt(process.env.WC_ADMIN_AFFILIATE_WAIT_MS || String(PRE_UPDATE_DELAY_MS), 10)
+  const start = Date.now()
+  console.log(`   waiting ${waitMs / 1000}s before Update…`)
+
+  while (Date.now() - start < waitMs) {
+    const text = await readAffiliateBox(page)
+    const hasName = text.length > 10
+      && !/loading|select an affiliate|no affiliate/i.test(text)
+      && (/affiliate/i.test(text) || /\(\d+\)/.test(text) || /@/.test(text))
+    if (hasName) {
+      const remaining = waitMs - (Date.now() - start)
+      if (remaining > 0) await page.waitForTimeout(remaining)
+      console.log(`   ✔ ${text.split('\n').find(l => l.trim().length > 3)?.trim().slice(0, 80) || text.slice(0, 80)}`)
+      return text
+    }
+    await page.waitForTimeout(500)
   }
   return null
 }
 
+async function readReferralHint(page) {
+  const text = await readAffiliateBox(page)
+  return text ? text.slice(0, 200) : null
+}
+
 async function clickUpdate(page) {
-  // WooCommerce HPOS order edit — blue Update in Order actions
-  await page.waitForTimeout(1200)
+  await waitForAffiliateName(page)
 
   const candidates = [
     () => page.getByRole('button', { name: /^Update$/i }).first(),
@@ -116,7 +143,8 @@ async function updateOrder(page, id) {
 }
 
 const ids = await loadIds()
-console.log(`Plan B: ${ids.length} order(s) — wp-admin Update (AffiliateWP referral)\n`)
+console.log(`Plan B: ${ids.length} order(s) — wp-admin Update (AffiliateWP referral)`)
+console.log(`Wait before Update: ${PRE_UPDATE_DELAY_MS / 1000}s per order\n`)
 
 const browser = await chromium.launch({ headless: HEADLESS, slowMo: 80 })
 const context = await browser.newContext()

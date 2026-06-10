@@ -114,6 +114,19 @@ function WcIdCell({ o }) {
   )
 }
 
+function AffiliateCell({ o, showId = false }) {
+  return (
+    <>
+      <td className="td text-sm max-w-[140px] truncate" title={o.affiliate_name}>
+        {o.affiliate_name || <span className="text-gray-300">—</span>}
+      </td>
+      {showId && (
+        <td className="td text-sm font-mono text-gray-500">{o.affiliate_id ?? '—'}</td>
+      )}
+    </>
+  )
+}
+
 function WcUpdateCell({ o }) {
   if (!o.wc_order_id) {
     return <td className="td text-center"><span className="text-gray-300">—</span></td>
@@ -147,13 +160,13 @@ function tableHeaders(tab) {
     return ['Order #', 'WC ID', 'Date', 'Customer', 'Coupon', 'Affiliate', 'AWP ID', 'Subtotal', 'Total', 'Commission', 'Status', updateCol]
   }
   if (tab === 'zoho_affiliate') {
-    return ['Order #', 'WC ID', 'Date', 'Customer', 'Coupon', 'Subtotal', 'Total', 'Status', updateCol]
+    return ['Order #', 'WC ID', 'Date', 'Customer', 'Coupon', 'Affiliate', 'AWP ID', 'Subtotal', 'Total', 'Status', updateCol]
   }
   if (tab === 'affiliate_coupon') {
     return ['Order #', 'WC ID', 'Source', 'Date', 'Customer', 'Coupon', 'Affiliate', 'AWP ID', 'Subtotal', 'Total', 'Commission', 'Status', updateCol]
   }
   if (tab === 'bb' || tab === 'so') {
-    return ['Order #', 'WC ID', 'Date', 'Customer', 'Coupon', 'Subtotal', 'Total', 'Status', 'Reference', updateCol]
+    return ['Order #', 'WC ID', 'Date', 'Customer', 'Coupon', 'Affiliate', 'Subtotal', 'Total', 'Status', 'Reference', updateCol]
   }
   return ['Order #', 'WC ID', 'Type', 'Date', 'Customer', 'Coupon', 'Affiliate', 'Subtotal', 'Total', 'Commission', 'Status', updateCol]
 }
@@ -174,8 +187,7 @@ function OrderRow({ o, tab }) {
         <td className="td text-sm text-gray-600">{fmtDate(o.order_date)}</td>
         <td className="td text-sm max-w-[160px] truncate" title={o.customer_name}>{o.customer_name || '—'}</td>
         <td className="td font-mono text-sm">{o.coupon_code}</td>
-        <td className="td text-sm max-w-[130px] truncate" title={o.affiliate_name}>{o.affiliate_name || '—'}</td>
-        <td className="td text-sm font-mono text-gray-500">{o.affiliate_id ?? '—'}</td>
+        <AffiliateCell o={o} showId />
         <td className="td text-right text-sm">{fmt(o.sub_total)}</td>
         <td className="td text-right text-sm font-medium">{fmt(o.total)}</td>
         <td className="td text-right text-sm">{commission}</td>
@@ -193,6 +205,7 @@ function OrderRow({ o, tab }) {
         <td className="td text-sm text-gray-600">{fmtDate(o.order_date)}</td>
         <td className="td text-sm max-w-[160px] truncate" title={o.customer_name}>{o.customer_name || '—'}</td>
         <td className="td font-mono text-sm">{o.coupon_code}</td>
+        <AffiliateCell o={o} showId />
         <td className="td text-right text-sm">{fmt(o.sub_total)}</td>
         <td className="td text-right text-sm font-medium">{fmt(o.total)}</td>
         <td className="td text-sm capitalize text-gray-600">{o.status || '—'}</td>
@@ -210,8 +223,7 @@ function OrderRow({ o, tab }) {
         <td className="td text-sm text-gray-600">{fmtDate(o.order_date)}</td>
         <td className="td text-sm max-w-[160px] truncate" title={o.customer_name}>{o.customer_name || '—'}</td>
         <td className="td font-mono text-sm">{o.coupon_code}</td>
-        <td className="td text-sm max-w-[130px] truncate" title={o.affiliate_name}>{o.affiliate_name || '—'}</td>
-        <td className="td text-sm font-mono text-gray-500">{o.affiliate_id ?? '—'}</td>
+        <AffiliateCell o={o} showId />
         <td className="td text-right text-sm">{fmt(o.sub_total)}</td>
         <td className="td text-right text-sm font-medium">{fmt(o.total)}</td>
         <td className="td text-right text-sm">{commission}</td>
@@ -229,6 +241,7 @@ function OrderRow({ o, tab }) {
         <td className="td text-sm text-gray-600">{fmtDate(o.order_date)}</td>
         <td className="td text-sm max-w-[160px] truncate" title={o.customer_name}>{o.customer_name || '—'}</td>
         <td className="td font-mono text-sm">{o.coupon_code || <span className="text-gray-300">—</span>}</td>
+        <AffiliateCell o={o} />
         <td className="td text-right text-sm">{fmt(o.sub_total)}</td>
         <td className="td text-right text-sm font-medium">{fmt(o.total)}</td>
         <td className="td text-sm capitalize text-gray-600">{o.status || '—'}</td>
@@ -246,7 +259,7 @@ function OrderRow({ o, tab }) {
       <td className="td text-sm text-gray-600">{fmtDate(o.order_date)}</td>
       <td className="td text-sm max-w-[160px] truncate" title={o.customer_name}>{o.customer_name || '—'}</td>
       <td className="td font-mono text-sm">{o.coupon_code || <span className="text-gray-300">—</span>}</td>
-      <td className="td text-sm max-w-[130px] truncate" title={o.affiliate_name}>{o.affiliate_name || '—'}</td>
+      <AffiliateCell o={o} />
       <td className="td text-right text-sm">{fmt(o.sub_total)}</td>
       <td className="td text-right text-sm font-medium">{fmt(o.total)}</td>
       <td className="td text-right text-sm">{commission}</td>
@@ -294,6 +307,7 @@ function SegmentBreakdownBar({ segments }) {
 export default function Orders() {
   const [searchParams, setSearchParams] = useSearchParams()
   const [data, setData]       = useState({ items: [], total: 0, summary: null })
+  const [affiliates, setAffiliates] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError]     = useState(null)
   const [offset, setOffset]   = useState(0)
@@ -302,6 +316,7 @@ export default function Orders() {
   const dateFrom = searchParams.get('from') || ''
   const dateTo   = searchParams.get('to') || ''
   const couponFilter = searchParams.get('coupon') || ''
+  const affiliateId = searchParams.get('affiliate') || ''
   const tab      = searchParams.get('tab') || (couponFilter === 'yes' ? 'wc_affiliate' : DEFAULT_TAB)
 
   const setParam = (k, v) => {
@@ -323,6 +338,7 @@ export default function Orders() {
     if (dateTo)   params.date_to = dateTo
     if (tab !== 'all') params.segment = tab
     if (couponFilter === 'yes' || couponFilter === 'true') params.coupon = 'yes'
+    if (affiliateId) params.affiliate_id = affiliateId
 
     api.orders(params)
       .then(d => setData({
@@ -332,9 +348,13 @@ export default function Orders() {
       }))
       .catch(e => setError(e.message))
       .finally(() => setLoading(false))
-  }, [search, status, dateFrom, dateTo, tab, couponFilter, offset])
+  }, [search, status, dateFrom, dateTo, tab, couponFilter, affiliateId, offset])
 
   useEffect(() => { load() }, [load])
+
+  useEffect(() => {
+    api.affiliates({ number: 500 }).then(d => setAffiliates(Array.isArray(d) ? d : [])).catch(() => {})
+  }, [])
 
   const showWcBulk = tab === 'wc_affiliate' || tab === 'affiliate_coupon'
 
@@ -488,6 +508,18 @@ export default function Orders() {
       )}
 
       <div className="px-6 mb-4 flex flex-wrap items-end gap-3">
+        <label className="block">
+          <span className="text-xs text-gray-500 mb-1 block">Affiliate</span>
+          <select className="select w-56" value={affiliateId}
+            onChange={e => setParam('affiliate', e.target.value)}>
+            <option value="">All affiliates</option>
+            {affiliates.map(a => (
+              <option key={a.affiliate_id} value={a.affiliate_id}>
+                #{a.affiliate_id} — {a.display_name || a.username || a.payment_email || `user ${a.user_id}`}
+              </option>
+            ))}
+          </select>
+        </label>
         <label className="block">
           <span className="text-xs text-gray-500 mb-1 block">Status</span>
           <input className="input w-32" placeholder="e.g. closed" value={status}

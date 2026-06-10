@@ -294,7 +294,7 @@ const ORDER_SEGMENT_EXPR = `
 app.get('/api/orders', handle(async req => {
   const {
     number = 50, offset = 0, search, status, coupon, segment,
-    date_from, date_to, has_coupon, order = 'DESC',
+    date_from, date_to, has_coupon, order = 'DESC', affiliate_id,
   } = req.query
 
   const vals = []
@@ -337,6 +337,10 @@ app.get('/api/orders', handle(async req => {
     clauses.push(`o.coupon_code IS NOT NULL`)
   } else if (has_coupon === 'false') {
     clauses.push(`o.coupon_code IS NULL`)
+  }
+  if (affiliate_id) {
+    vals.push(parseInt(affiliate_id, 10))
+    clauses.push(`o.affiliate_id = $${vals.length}`)
   }
 
   const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''
