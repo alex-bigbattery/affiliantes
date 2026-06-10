@@ -424,6 +424,7 @@ app.get('/api/orders', handle(async req => {
         wo.order_id AS wc_order_id,
         NULLIF(${COUPON_EXPR}, '') AS coupon_code,
         m.affiliate_name,
+        COALESCE(NULLIF(TRIM(m.affiliate_email), ''), NULLIF(TRIM(a.payment_email), ''), NULLIF(TRIM(a.email), '')) AS affiliate_email,
         m.affiliate_id,
         m.kind AS coupon_kind,
         m.rate AS coupon_rate,
@@ -437,6 +438,7 @@ app.get('/api/orders', handle(async req => {
       FROM sales_orders s
       LEFT JOIN wc_orders wo ON wo.order_number_norm = UPPER(TRIM(s.salesorder_number))
       LEFT JOIN coupon_map m ON m.coupon_code = ${COUPON_EXPR}
+      LEFT JOIN awp_affiliates a ON a.affiliate_id = m.affiliate_id
       LEFT JOIN customer_first cf ON cf.salesorder_id = s.salesorder_id
     ),
     filtered AS (SELECT * FROM enriched o ${where})

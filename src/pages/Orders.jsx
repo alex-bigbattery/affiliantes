@@ -63,6 +63,7 @@ const EXPORT_COLUMNS = [
   { header: 'Product(s)',      value: o => o.products_text || '' },
   { header: 'Items sold',      value: o => o.items_sold ?? '' },
   { header: 'Affiliate',       value: o => o.affiliate_name || '' },
+  { header: 'Affiliate email', value: o => o.affiliate_email || '' },
   { header: 'AWP ID',          value: o => o.affiliate_id ?? '' },
   { header: 'Net',             value: o => Number(o.sub_total || 0) },
   { header: 'Revenue',         value: o => Number(o.total || 0) },
@@ -120,12 +121,17 @@ function WcIdCell({ o }) {
   )
 }
 
-function AffiliateCell({ o, showId = false }) {
+function AffiliateCell({ o, showId = false, showEmail = true }) {
   return (
     <>
       <td className="td text-sm max-w-[140px] truncate" title={o.affiliate_name}>
         {o.affiliate_name || <span className="text-gray-300">—</span>}
       </td>
+      {showEmail && (
+        <td className="td text-sm max-w-[180px] truncate text-gray-600" title={o.affiliate_email}>
+          {o.affiliate_email || <span className="text-gray-300">—</span>}
+        </td>
+      )}
       {showId && (
         <td className="td text-sm font-mono text-gray-500">{o.affiliate_id ?? '—'}</td>
       )}
@@ -261,6 +267,32 @@ function SourceBadge({ source }) {
   )
 }
 
+function TableFooter({ headers, summary, orderCount }) {
+  const netIdx = headers.indexOf('Net')
+  if (netIdx < 0 || !summary) return null
+
+  const showCommission = headers.includes('Commission')
+  const moneyCols = showCommission ? 4 : 3
+  const tailCols = headers.length - netIdx - moneyCols
+
+  return (
+    <tfoot>
+      <tr className="bg-slate-50 border-t-2 border-slate-300">
+        <td colSpan={netIdx} className="td text-right font-semibold text-sm text-gray-700">
+          Total{orderCount != null ? ` (${orderCount.toLocaleString()} orders)` : ''}
+        </td>
+        <td className="td text-right text-sm font-semibold">{fmt(summary.total_subtotal)}</td>
+        <td className="td text-right text-sm font-semibold">{fmt(summary.total_revenue)}</td>
+        <td className="td text-right text-sm font-semibold">{fmt(summary.total_net_sales)}</td>
+        {showCommission && (
+          <td className="td text-right text-sm font-bold text-brand-orange">{fmt(summary.est_commission)}</td>
+        )}
+        {tailCols > 0 && <td colSpan={tailCols} className="td" />}
+      </tr>
+    </tfoot>
+  )
+}
+
 function tableHeaders(tab) {
   const updateCol = 'WC Admin'
   const detail = ['Customer type', 'Product(s)', 'Items sold']
@@ -268,19 +300,22 @@ function tableHeaders(tab) {
     ? ['Net', 'Revenue', 'Net Sales', 'Commission']
     : ['Net', 'Revenue', 'Net Sales']
 
+  const affiliate = ['Affiliate', 'Email', 'AWP ID']
+  const affiliateBasic = ['Affiliate', 'Email']
+
   if (tab === 'wc_affiliate') {
-    return ['Order #', 'WC ID', 'Date', 'Customer', ...detail, 'Coupon', 'Affiliate', 'AWP ID', ...money(true), 'Status', updateCol]
+    return ['Order #', 'WC ID', 'Date', 'Customer', ...detail, 'Coupon', ...affiliate, ...money(true), 'Status', updateCol]
   }
   if (tab === 'zoho_affiliate') {
-    return ['Order #', 'WC ID', 'Date', 'Customer', ...detail, 'Coupon', 'Affiliate', 'AWP ID', ...money(), 'Status', updateCol]
+    return ['Order #', 'WC ID', 'Date', 'Customer', ...detail, 'Coupon', ...affiliate, ...money(), 'Status', updateCol]
   }
   if (tab === 'affiliate_coupon') {
-    return ['Order #', 'WC ID', 'Source', 'Date', 'Customer', ...detail, 'Coupon', 'Affiliate', 'AWP ID', ...money(true), 'Status', updateCol]
+    return ['Order #', 'WC ID', 'Source', 'Date', 'Customer', ...detail, 'Coupon', ...affiliate, ...money(true), 'Status', updateCol]
   }
   if (tab === 'bb' || tab === 'so') {
-    return ['Order #', 'WC ID', 'Date', 'Customer', ...detail, 'Coupon', 'Affiliate', ...money(), 'Status', 'Reference', updateCol]
+    return ['Order #', 'WC ID', 'Date', 'Customer', ...detail, 'Coupon', ...affiliateBasic, ...money(), 'Status', 'Reference', updateCol]
   }
-  return ['Order #', 'WC ID', 'Type', 'Date', 'Customer', ...detail, 'Coupon', 'Affiliate', ...money(true), 'Status', updateCol]
+  return ['Order #', 'WC ID', 'Type', 'Date', 'Customer', ...detail, 'Coupon', ...affiliateBasic, ...money(true), 'Status', updateCol]
 }
 
 function OrderRow({ o, tab }) {
@@ -349,7 +384,7 @@ function OrderRow({ o, tab }) {
         <td className="td text-sm max-w-[160px] truncate" title={o.customer_name}>{o.customer_name || '—'}</td>
         <DetailCells o={o} />
         <td className="td font-mono text-sm">{o.coupon_code || <span className="text-gray-300">—</span>}</td>
-        <AffiliateCell o={o} />
+        <AffiliateCell o={o} showEmail showId={false} />
         <MoneyCells o={o} />
         <td className="td text-sm capitalize text-gray-600">{o.status || '—'}</td>
         <td className="td text-xs text-gray-500 font-mono">{o.reference_number || '—'}</td>
@@ -367,7 +402,7 @@ function OrderRow({ o, tab }) {
       <td className="td text-sm max-w-[160px] truncate" title={o.customer_name}>{o.customer_name || '—'}</td>
       <DetailCells o={o} />
       <td className="td font-mono text-sm">{o.coupon_code || <span className="text-gray-300">—</span>}</td>
-      <AffiliateCell o={o} />
+      <AffiliateCell o={o} showEmail showId={false} />
       <MoneyCells o={o} showCommission />
       <td className="td text-sm capitalize text-gray-600">{o.status || '—'}</td>
       <WcUpdateCell o={o} />
@@ -688,6 +723,9 @@ export default function Orders() {
                   ))
               }
             </tbody>
+            {!loading && data.items.length > 0 && s && (
+              <TableFooter headers={headers} summary={s} orderCount={s.filtered_orders} />
+            )}
           </table>
         </div>
 
