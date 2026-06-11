@@ -12,7 +12,6 @@
 // app-wide auth is introduced, gate these the same as the other audit/data tabs
 // and re-enable the raw_json-on-export role check.
 // ─────────────────────────────────────────────────────────────────────────────
-import ExcelJS from 'exceljs'
 import { pool } from './db.js'
 
 class HttpError extends Error {
