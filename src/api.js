@@ -10,7 +10,14 @@ async function req(method, path, body, params) {
     headers: body ? { 'Content-Type': 'application/json' } : undefined,
     body: body ? JSON.stringify(body) : undefined,
   })
-  const data = await res.json()
+  const text = await res.text()
+  let data
+  try { data = text ? JSON.parse(text) : null } catch {
+    const hint = text.trimStart().startsWith('<!')
+      ? 'API returned HTML instead of JSON — backend may still be deploying, or VITE_API_URL is misconfigured.'
+      : 'Invalid JSON response from API.'
+    throw new Error(`${hint} (${res.status} ${path})`)
+  }
   if (!res.ok) throw new Error(data?.error?.message || data?.error || `HTTP ${res.status}`)
   return data
 }
