@@ -69,7 +69,11 @@ export default function Referrals() {
     if (!confirm(`Change ${selected.size} referrals to "${newStatus}"?`)) return
     setBulkWorking(true)
     try {
-      await api.bulkReferrals([...selected], newStatus)
+    const res = await api.bulkReferrals([...selected], newStatus)
+      if (res.failed > 0) {
+        alert(`Updated ${res.updated}, failed ${res.failed}: ${res.errors?.[0]?.error || 'see console'}`)
+        console.warn('Bulk referral errors', res.errors)
+      }
       setSelected(new Set())
       load()
     } catch (e) { alert(e.message) }

@@ -23,17 +23,26 @@ if (!API_KEY) {
   process.exit(1)
 }
 
-const wooVars = [
+const envVars = [
   { key: 'WOO_STORE_URL', value: process.env.WOO_STORE_URL || 'https://bigbattery.com' },
   { key: 'WOO_CONSUMER_KEY', value: process.env.WOO_CONSUMER_KEY },
   { key: 'WOO_CONSUMER_SECRET', value: process.env.WOO_CONSUMER_SECRET },
+  { key: 'AFFWP_PUBLIC_KEY', value: process.env.AFFWP_PUBLIC_KEY },
+  { key: 'AFFWP_TOKEN', value: process.env.AFFWP_TOKEN || process.env.AFFWP_SECRET_KEY },
+  { key: 'AFFWP_SECRET_KEY', value: process.env.AFFWP_SECRET_KEY || process.env.AFFWP_TOKEN },
 ]
 
-for (const v of wooVars) {
+const requiredWoo = envVars.slice(0, 3)
+for (const v of requiredWoo) {
   if (!v.value) {
     console.error(`Missing ${v.key} in .env`)
     process.exit(1)
   }
+}
+
+const affwpPresent = envVars.slice(3).some(v => v.value)
+if (!affwpPresent) {
+  console.warn('⚠ No AFFWP_* keys in .env — Pay/Mark paid will fail until you add them.')
 }
 
 async function api(method, path, body) {
@@ -79,10 +88,12 @@ async function main() {
     const ev = row.envVar || row
     return [ev.key, { key: ev.key, value: ev.value }]
   }))
-  for (const v of wooVars) merged.set(v.key, v)
+  for (const v of envVars) {
+    if (v.value) merged.set(v.key, v)
+  }
 
   await api('PUT', `/services/${serviceId}/env-vars`, [...merged.values()])
-  console.log('✔ Env vars updated:', wooVars.map(v => v.key).join(', '))
+  console.log('✔ Env vars updated:', envVars.filter(v => v.value).map(v => v.key).join(', '))
 
   await api('POST', `/services/${serviceId}/deploys`, { clearCache: 'do_not_clear' })
   console.log('✔ Deploy triggered — wait ~1–3 min, then check /api/sync/status')

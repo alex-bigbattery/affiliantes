@@ -5,7 +5,9 @@ import { pool } from './db.js'
 config()
 
 const BASE = 'https://bigbattery.com/wp-json/affwp/v1'
-const AUTH = Buffer.from(`${process.env.AFFWP_PUBLIC_KEY}:${process.env.AFFWP_TOKEN}`).toString('base64')
+const AUTH = Buffer.from(
+  `${process.env.AFFWP_PUBLIC_KEY}:${process.env.AFFWP_TOKEN || process.env.AFFWP_SECRET_KEY}`
+).toString('base64')
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 
 async function awp(endpoint, params = {}) {

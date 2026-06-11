@@ -20,6 +20,7 @@ import { refreshWcOrder, refreshWcOrdersBulk, wooConfigured as wooUpdateConfigur
 import { runCouponMapSync } from './couponMapSync.js'
 import { registerZohoPriceHistory } from './zohoPriceHistory.js'
 import { authConfigured, requireAuth, registerAuthRoutes } from './auth.js'
+import { awpRequest, awpUpdateReferral, awpDeleteReferral, syncReferralRow, awpConfigured } from './affwpClient.js'
 
 config()
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -28,7 +29,11 @@ const PORT = process.env.PORT || 3001
 const SYNC_MS = (parseInt(process.env.SYNC_INTERVAL_MINUTES) || 30) * 60 * 1000
 
 const BASE = 'https://bigbattery.com/wp-json/affwp/v1'
-const AUTH = Buffer.from(`${process.env.AFFWP_PUBLIC_KEY}:${process.env.AFFWP_TOKEN}`).toString('base64')
+
+// Legacy read helper — mutations use affwpClient.js
+async function awp(method, endpoint, params = {}, data = null) {
+  return awpRequest(method, endpoint, { params, data })
+}
 
 // CORS: ALLOWED_ORIGINS (production), *.vercel.app, localhost (local dev), curl.
 // You do not need to add localhost to ALLOWED_ORIGINS on Render.
@@ -97,7 +102,7 @@ function handle(fn) {
     catch (e) {
       const msg = e.response?.data || e.message || String(e)
       console.error(e.config?.url || e.message, msg)
-      res.status(e.response?.status || 500).json({ error: msg })
+      res.status(e.status || e.response?.status || 500).json({ error: typeof msg === 'string' ? msg : msg?.message || String(msg) })
     }
   }
 }
@@ -113,6 +118,7 @@ app.get('/api/sync/status', async (_req, res) => {
       running: syncRunning,
       last: lastSync,
       log: awp.rows,
+      affwp_configured: awpConfigured(),
       woo: { running: wooSyncRunning, last: lastWooSync, log: woo.rows },
     })
   } catch (e) { res.status(500).json({ error: e.message }) }
@@ -241,35 +247,43 @@ app.get('/api/referrals/:id', handle(async req => {
 }))
 
 app.put('/api/referrals/:id', handle(async req => {
-  const result = await awp('PUT', `/referrals/${req.params.id}`, {}, req.body)
-  if (result?.referral_id) {
-    await pool.query(`
-      UPDATE awp_referrals SET status=$1, amount=$2, raw=$3, synced_at=NOW()
-      WHERE referral_id=$4
-    `, [result.status, parseFloat(result.amount || 0), JSON.stringify(result), result.referral_id])
-  }
+  const result = await awpUpdateReferral(req.params.id, req.body)
+  await syncReferralRow(pool, result)
   return result
 }))
 
 app.delete('/api/referrals/:id', handle(async req => {
-  const result = await awp('DELETE', `/referrals/${req.params.id}`)
+  const result = await awpDeleteReferral(req.params.id)
   await pool.query(`DELETE FROM awp_referrals WHERE referral_id=$1`, [req.params.id])
   return result
 }))
 
 app.post('/api/referrals/bulk', handle(async req => {
   const { ids, status } = req.body
-  const results = await Promise.allSettled(ids.map(id => awp('PUT', `/referrals/${id}`, {}, { status })))
-  const updated = results.filter(r => r.status === 'fulfilled').length
-  // Update Supabase for successful ones
-  const succeeded = ids.filter((_, i) => results[i].status === 'fulfilled')
-  if (succeeded.length) {
-    await pool.query(
-      `UPDATE awp_referrals SET status=$1, synced_at=NOW() WHERE referral_id = ANY($2::int[])`,
-      [status, succeeded]
-    )
+  if (!Array.isArray(ids) || !ids.length) {
+    const err = new Error('ids array required')
+    err.status = 400
+    throw err
   }
-  return { updated, failed: results.length - updated }
+  const results = await Promise.allSettled(
+    ids.map(id => awpUpdateReferral(id, { status })),
+  )
+  const succeeded = []
+  const errors = []
+  for (let i = 0; i < results.length; i++) {
+    if (results[i].status === 'fulfilled') {
+      succeeded.push(ids[i])
+      await syncReferralRow(pool, results[i].value)
+    } else {
+      errors.push({ id: ids[i], error: results[i].reason?.message || String(results[i].reason) })
+    }
+  }
+  if (!succeeded.length && errors.length) {
+    const err = new Error(errors[0].error)
+    err.status = 502
+    throw err
+  }
+  return { updated: succeeded.length, failed: errors.length, errors }
 }))
 
 // ── PAYOUTS (read from Supabase) ─────────────────────────────────────────────
@@ -597,6 +611,10 @@ app.get('/api/orders', handle(async req => {
   }
   if (segment === 'affiliate_coupon') {
     clauses.push(`o.segment IN ('wc_affiliate', 'zoho_affiliate')`)
+  } else if (segment === 'bb') {
+    // "BB orders" tab = ALL web-store BB-prefix orders, WITH or WITHOUT an
+    // affiliate coupon (intentionally overlaps the Affiliate Coupon tab).
+    clauses.push(`o.salesorder_number ILIKE 'BB%'`)
   } else if (segment) {
     vals.push(segment)
     clauses.push(`o.segment = $${vals.length}`)
@@ -712,11 +730,12 @@ app.get('/api/orders', handle(async req => {
     `, filterVals),
     pool.query(`
       WITH enriched AS (
-        SELECT ${ORDER_SEGMENT_EXPR} AS segment
+        SELECT ${ORDER_SEGMENT_EXPR} AS segment,
+               (s.salesorder_number ILIKE 'BB%') AS is_bb
         FROM sales_orders s
         LEFT JOIN coupon_map m ON m.coupon_code = ${COUPON_EXPR}
       )
-      SELECT segment, COUNT(*)::int AS n
+      SELECT segment, COUNT(*)::int AS n, COUNT(*) FILTER (WHERE is_bb)::int AS bb_n
       FROM enriched
       GROUP BY segment
     `),
@@ -724,6 +743,8 @@ app.get('/api/orders', handle(async req => {
   ])
 
   const segments = Object.fromEntries(segRows.map(r => [r.segment, r.n]))
+  // All BB-prefix web orders (incl. affiliate-coupon ones) — the "BB orders" tab badge.
+  const bbAll = segRows.reduce((s, r) => s + (r.bb_n || 0), 0)
 
   return {
     items: rows.map(presentOrder),
@@ -738,6 +759,7 @@ app.get('/api/orders', handle(async req => {
       est_commission:  parseFloat(sumRow.est_commission),
       so:              segments.so || 0,
       bb:              segments.bb || 0,
+      bb_all:          bbAll,
       wc_affiliate:    segments.wc_affiliate || 0,
       zoho_affiliate:  segments.zoho_affiliate || 0,
       affiliate_coupon: (segments.wc_affiliate || 0) + (segments.zoho_affiliate || 0),
