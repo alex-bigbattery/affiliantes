@@ -8,6 +8,7 @@ import Payouts from './pages/Payouts'
 import Visits from './pages/Visits'
 import Coupons from './pages/Coupons'
 import Orders from './pages/Orders'
+import ZohoPriceHistory from './pages/ZohoPriceHistory'
 import Creatives from './pages/Creatives'
 import Sync from './pages/Sync'
 
@@ -24,6 +25,7 @@ export default function App() {
           <Route path="/visits"         element={<Visits />} />
           <Route path="/coupons"        element={<Coupons />} />
           <Route path="/orders"         element={<Orders />} />
+          <Route path="/zoho-price-history" element={<ZohoPriceHistory />} />
           <Route path="/creatives"      element={<Creatives />} />
           <Route path="/sync"           element={<Sync />} />
         </Routes>

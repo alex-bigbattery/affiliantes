@@ -12,6 +12,7 @@ import { runWooOrderSync } from './wooOrderSync.js'
 import { enrichOrderLineItems, enrichWcLineItems } from './orderLineItems.js'
 import { refreshWcOrder, refreshWcOrdersBulk, wooConfigured as wooUpdateConfigured } from './wooOrderUpdate.js'
 import { runCouponMapSync } from './couponMapSync.js'
+import { registerZohoPriceHistory } from './zohoPriceHistory.js'
 
 config()
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -38,6 +39,9 @@ app.use(express.json())
 
 // Health check (used by Render)
 app.get('/api/health', (_req, res) => res.json({ ok: true, ts: Date.now() }))
+
+// Zoho Price History — read-only consumption of external capture tables (additive)
+registerZohoPriceHistory(app)
 
 // ── AffiliateWP write helper (still calls API for mutations) ─────────────────
 async function awp(method, endpoint, params = {}, data = null) {

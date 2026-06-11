@@ -20,6 +20,13 @@ const post = (path, body)   => req('POST',   path, body)
 const put  = (path, body)   => req('PUT',    path, body)
 const del  = (path)         => req('DELETE', path)
 
+// Absolute URL for a GET endpoint — used for file-download links (e.g. Excel export).
+export function apiUrl(path, params) {
+  const url = new URL(BASE + path, window.location.origin)
+  if (params) Object.entries(params).forEach(([k, v]) => v != null && v !== '' && url.searchParams.set(k, String(v)))
+  return url.toString()
+}
+
 export const api = {
   // Stats
   stats: () => get('/stats'),
@@ -81,6 +88,13 @@ export const api = {
 
   // WooCommerce catalog (Supabase)
   wooCoupons: (p) => get('/woocommerce/coupons', p),
+
+  // Zoho Price History (read-only consumption of external capture tables)
+  zohoDaily:     (p) => get('/zoho-price-history/daily', p),
+  zohoPeriods:   (p) => get('/zoho-price-history/daily', p), // legacy alias
+  zohoSnapshots: (p) => get('/zoho-price-history/snapshots', p),
+  zohoRuns:      (p) => get('/zoho-price-history/runs', p),
+  zohoExportUrl: (kind, p) => apiUrl(`/zoho-price-history/${kind}/export`, p),
 }
 
 export function fmt(n) {
