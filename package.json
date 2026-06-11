@@ -17,7 +17,11 @@
     "wc:admin-update": "node scripts/wc-admin-bulk-update.js",
     "audit:referrals": "node scripts/affiliate-referral-audit.js",
     "seed:dashboard-users": "node scripts/seed-dashboard-users.js",
-    "restore:render-env": "node scripts/restore-render-env.js"
+    "restore:render-env": "node scripts/restore-render-env.js",
+    "remove:mfa-factors": "node scripts/remove-mfa-factors.js",
+    "audit:unlinked-coupons": "node scripts/audit-unlinked-affiliate-coupons.js",
+    "match:unlinked-coupons": "node scripts/match-unlinked-coupon-affiliates.js",
+    "match:unlinked-coupons:apply": "node scripts/match-unlinked-coupon-affiliates.js --apply"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.1",

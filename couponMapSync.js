@@ -1,4 +1,5 @@
 import { pool } from './db.js'
+import { matchCouponToAffiliate } from './couponAffiliateMatch.js'
 
 function metaVal(meta, key) {
   if (!Array.isArray(meta)) return null
@@ -49,6 +50,8 @@ export async function runCouponMapSync({ dryRun = false } = {}) {
     const hasAffiliatePress = !!metaVal(w.meta_data, 'affiliatepress_woo_coupon_affiliate_id')
     const wcPercent = w.discount_type === 'percent' ? parseRate(w.amount) : null
 
+    const existing = existingMap.get(code)
+
     let kind
     let affiliate = affwpId && affById.has(affwpId) ? affById.get(affwpId) : null
 
@@ -63,7 +66,27 @@ export async function runCouponMapSync({ dryRun = false } = {}) {
       continue
     }
 
-    const existing = existingMap.get(code)
+    // WC often has affiliate_check=1 but no affwp_discount_affiliate — keep manual/seed/fuzzy link.
+    let matchReason = null
+    if (!affiliate && kind === 'affiliate') {
+      if (existing?.affiliate_id && affById.has(existing.affiliate_id)) {
+        affiliate = affById.get(existing.affiliate_id)
+        matchReason = 'preserved existing map'
+      } else if (existing?.affiliate_email) {
+        const want = existing.affiliate_email.toLowerCase()
+        affiliate = affRes.rows.find(a =>
+          a.email?.toLowerCase() === want || a.payment_email?.toLowerCase() === want
+        ) || null
+        if (affiliate) matchReason = 'preserved email from map'
+      }
+      if (!affiliate) {
+        const m = matchCouponToAffiliate({ code, description: w.description }, affRes.rows)
+        if (m.affiliate && m.confidence !== 'none') {
+          affiliate = m.affiliate
+          matchReason = m.reason
+        }
+      }
+    }
     const email = affiliate?.payment_email || affiliate?.email || null
     const name = affiliate?.display_name || affiliate?.username || null
     const affiliateId = affiliate?.affiliate_id ?? null
@@ -72,7 +95,9 @@ export async function runCouponMapSync({ dryRun = false } = {}) {
 
     const notes = !affiliate && kind === 'affiliate'
       ? (existing?.notes || 'WC affiliate coupon — no affwp_discount_affiliate in WooCommerce')
-      : null
+      : (matchReason && kind === 'affiliate'
+        ? `Auto-matched: ${matchReason} (WC missing affwp_discount_affiliate)`
+        : (existing?.notes || null))
 
     const row = {
       coupon_code: code,

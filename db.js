@@ -238,14 +238,15 @@ const COUPON_SEED = [
   ['stege10',        'affiliate', 'Jeff Stege', 'jeffstege@yahoo.com', 5, true, null],
   ['tocci10',        'affiliate', 'Jarrod Tocci', 'info@jarrodtocci.com', 10, true, null],
   ['spicer10',       'affiliate', 'Kyle Spicer', 'spicerdesignsllc@gmail.com', 10, true, null],
-  ['karr10',         'affiliate', 'Kerry Koehler', 'kerrykoehler28@gmail.com', 5, true, null],
+  ['karr10',         'affiliate', 'Kerry Koehler', 'kerrykoehler28@gmail.com', 5, true, 'Link Kerry (299) in WC coupon if affwp meta is empty'],
   ['daveandsonya10', 'affiliate', 'Dave & Sonya', 'daveandsonya@daveandsonyainmichigan.com', 5, true, null],
   ['landtohouse',    'affiliate', 'landtohouse', 'landtohouse@gmail.com', 5, true, null],
   // Affiliate coupons with UNCONFIRMED owner/rate (flagged for Accounting)
   ['partner10',      'affiliate', null, null, null, false, 'Owner unconfirmed — review with Accounting'],
   ['solarhav10',     'affiliate', null, null, null, false, 'Owner unconfirmed — review with Accounting'],
   ['diysolar',       'affiliate', null, null, null, false, 'Owner unconfirmed — review with Accounting'],
-  ['kgsgarage10',    'affiliate', null, null, null, false, 'Owner unconfirmed — review with Accounting'],
+  ['kgsgarage10',    'affiliate', "KG's Garage", null, 5, true, 'Affiliate #295 — link in WC coupon if affwp meta empty'],
+  ['karr5',          'affiliate', 'Kerry Koehler', 'kerrykoehler28@gmail.com', 5, true, 'Same as karr10 — affiliate #299'],
   // Marketing / store-wide promos (not affiliate commissions)
   ...['volt5','volt 5','mycart5','mycart7','mycart3','blackfriday2025','bigbatterybf2025',
       'blackfridaybf2025','battery','2battery','february7','jan5','holiday2025','holiday2025cs',

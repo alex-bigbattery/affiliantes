@@ -66,4 +66,4 @@ console.log(`Provisioning ${ALLOWED_DASHBOARD_EMAILS.length} dashboard users…`
 for (const email of ALLOWED_DASHBOARD_EMAILS) {
   await upsertUser(email)
 }
-console.log('Done. Users must change password on first sign-in, then enroll 2FA.')
+console.log('Done. Users must change password on first sign-in.')

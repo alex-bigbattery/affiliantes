@@ -31,13 +31,8 @@ export function AuthShell({ title, subtitle, badge, children, wide = false }) {
             Commission insights, affiliates &amp; orders — in one place.
           </h2>
           <p className="hidden lg:block mt-4 text-navy-100/55 text-sm leading-relaxed max-w-sm">
-            Secure access for the BigBattery team. Sign in with your company email and authenticator app.
+            Secure access for the BigBattery team. Sign in with your username and password.
           </p>
-
-          <div className="hidden lg:flex items-center gap-2 mt-10 text-navy-100/40 text-xs">
-            <Shield size={14} />
-            <span>Protected with two-factor authentication</span>
-          </div>
         </div>
       </div>
 
