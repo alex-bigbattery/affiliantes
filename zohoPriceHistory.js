@@ -76,6 +76,17 @@ function parsePaging(query, defLimit = 250) {
 const EXPORT_CAP = 50000
 const num = v => (v == null ? null : Number(v))
 
+/** Postgres date/timestamp → YYYY-MM-DD (never use String(date).slice — that yields "Thu Jun 11"). */
+function toIsoDateOnly(v) {
+  if (v == null) return null
+  if (v instanceof Date) return v.toISOString().slice(0, 10)
+  const s = String(v)
+  const iso = s.match(/^(\d{4}-\d{2}-\d{2})/)
+  if (iso) return iso[1]
+  const parsed = new Date(s)
+  return Number.isNaN(parsed.getTime()) ? s : parsed.toISOString().slice(0, 10)
+}
+
 // ── column specs (drive both JSON shape parity and Excel columns) ─────────────
 const DAILY_COLS = [
   { header: 'SKU',  key: 'sku',         type: 'text',  width: 18 },
@@ -144,7 +155,7 @@ function dailyQuery(f) {
         LAG(rate) OVER (PARTITION BY item_id ORDER BY price_date) AS prev_rate
       FROM daily_raw
     )
-    SELECT d.item_id, d.sku, d.name, d.rate, d.price_date
+    SELECT d.item_id, d.sku, d.name, d.rate, d.price_date::text AS price_date
     FROM daily d${statusJoin}${where}`
 
   return { sql, vals, orderBy: ` ORDER BY d.sku ASC, d.price_date DESC` }
@@ -183,7 +194,7 @@ function jsonRows(kind, rows) {
     const out = { ...r }
     if ('rate' in out) out.rate = num(out.rate)
     if ('price_date' in out && out.price_date != null) {
-      out.price_date = String(out.price_date).slice(0, 10)
+      out.price_date = toIsoDateOnly(out.price_date)
     }
     return out
   })

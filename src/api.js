@@ -112,7 +112,14 @@ export function fmt(n) {
 
 export function fmtDate(d) {
   if (!d) return '—'
-  return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  const iso = String(d).match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (iso) {
+    const dt = new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]))
+    return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  }
+  const dt = new Date(d)
+  if (Number.isNaN(dt.getTime())) return String(d)
+  return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
 export function fmtDateTime(d) {
