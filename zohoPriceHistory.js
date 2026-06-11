@@ -241,6 +241,7 @@ function cellValue(type, v) {
 }
 
 async function streamWorkbook(res, { subtab, sourceTable, cols, rows, truncated, filters, from, to }) {
+  const { default: ExcelJS } = await import('exceljs')
   const exportedAtISO = new Date().toISOString()
   const stamp = exportedAtISO.slice(0, 16).replace(/:/g, '') + 'Z' // e.g. 2026-06-11T1532Z
   const filename = `zoho_${subtab}_${from}_to_${to}_${stamp}.xlsx`
