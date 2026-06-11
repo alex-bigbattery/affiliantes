@@ -21,7 +21,8 @@
     "remove:mfa-factors": "node scripts/remove-mfa-factors.js",
     "audit:unlinked-coupons": "node scripts/audit-unlinked-affiliate-coupons.js",
     "match:unlinked-coupons": "node scripts/match-unlinked-coupon-affiliates.js",
-    "match:unlinked-coupons:apply": "node scripts/match-unlinked-coupon-affiliates.js --apply"
+    "match:unlinked-coupons:apply": "node scripts/match-unlinked-coupon-affiliates.js --apply",
+    "backfill:wc-sales-orders": "node scripts/backfill-wc-to-sales-orders.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.1",

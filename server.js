@@ -9,6 +9,7 @@ import { pool, initTables } from './db.js'
 import { runSync, lastSync, syncRunning } from './sync.js'
 import { runWooSync, lastWooSync, wooSyncRunning } from './wooSync.js'
 import { runWooOrderSync, fetchWcOrderNotes } from './wooOrderSync.js'
+import { backfillWcOrdersToSalesOrders } from './wcSalesOrderBackfill.js'
 import {
   IS_REFUNDED_SQL, WC_REFUNDS_SQL, AFFILIATE_REFERRALS_SQL,
   WC_ONLY_IS_REFUNDED_SQL, WC_ONLY_WC_REFUNDS_SQL, WC_ONLY_AFFILIATE_REFERRALS_SQL,
@@ -130,6 +131,13 @@ app.post('/api/sync/woo/run', async (_req, res) => {
 })
 
 app.post('/api/sync/woo/orders/run', handle(async () => runWooOrderSync()))
+
+app.post('/api/sync/woo/sales-orders/backfill', handle(async (req) => {
+  const numbers = req.body?.order_numbers || req.query?.orders?.split(',').filter(Boolean)
+  return backfillWcOrdersToSalesOrders({
+    orderNumbers: numbers?.length ? numbers : null,
+  })
+}))
 
 app.post('/api/sync/coupon-map/run', handle(async () => {
   couponCache = null

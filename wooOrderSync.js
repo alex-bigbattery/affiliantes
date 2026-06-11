@@ -2,6 +2,7 @@ import axios from 'axios'
 import { config } from 'dotenv'
 import { pool } from './db.js'
 import { enrichWcLineItems } from './orderLineItems.js'
+import { backfillWcOrdersToSalesOrders } from './wcSalesOrderBackfill.js'
 
 config()
 
@@ -181,6 +182,10 @@ export async function runWooOrderSync({ after } = {}) {
 
   const orders = await fetchOrders({ after: syncAfter })
   const count = await upsertOrders(orders)
+  const backfill = await backfillWcOrdersToSalesOrders().catch(e => {
+    console.warn('WC → sales_orders backfill:', e.message)
+    return { inserted: 0, error: e.message }
+  })
 
   if (orders.length) {
     const latest = orders.reduce((max, o) => {
@@ -195,5 +200,5 @@ export async function runWooOrderSync({ after } = {}) {
     }
   }
 
-  return { count, after: syncAfter }
+  return { count, after: syncAfter, backfill }
 }
