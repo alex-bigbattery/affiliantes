@@ -8,11 +8,17 @@ import { fileURLToPath } from 'url'
 import { pool, initTables } from './db.js'
 import { runSync, lastSync, syncRunning } from './sync.js'
 import { runWooSync, lastWooSync, wooSyncRunning } from './wooSync.js'
-import { runWooOrderSync } from './wooOrderSync.js'
+import { runWooOrderSync, fetchWcOrderNotes } from './wooOrderSync.js'
+import {
+  IS_REFUNDED_SQL, WC_REFUNDS_SQL, AFFILIATE_REFERRALS_SQL,
+  WC_ONLY_IS_REFUNDED_SQL, WC_ONLY_WC_REFUNDS_SQL, WC_ONLY_AFFILIATE_REFERRALS_SQL,
+  enrichRefundFields,
+} from './orderRefunds.js'
 import { enrichOrderLineItems, enrichWcLineItems } from './orderLineItems.js'
 import { refreshWcOrder, refreshWcOrdersBulk, wooConfigured as wooUpdateConfigured } from './wooOrderUpdate.js'
 import { runCouponMapSync } from './couponMapSync.js'
 import { registerZohoPriceHistory } from './zohoPriceHistory.js'
+import { authConfigured, requireAuth, registerAuthRoutes } from './auth.js'
 
 config()
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -41,6 +47,19 @@ app.use(express.json())
 
 // Health check (used by Render)
 app.get('/api/health', (_req, res) => res.json({ ok: true, ts: Date.now() }))
+
+// Auth (password setup uses aal1; other routes require MFA aal2 below)
+registerAuthRoutes(app)
+
+app.use((req, res, next) => {
+  if (!req.path.startsWith('/api/')) return next()
+  if (req.path === '/api/health') return next()
+  if (req.path === '/api/auth/password-setup-complete') return next()
+  if (!authConfigured()) {
+    return res.status(503).json({ error: 'Auth not configured (SUPABASE_URL / SUPABASE_ANON_KEY)' })
+  }
+  return requireAuth()(req, res, next)
+})
 
 // Zoho Price History — read-only consumption of external capture tables (additive)
 registerZohoPriceHistory(app)
@@ -349,16 +368,16 @@ app.get('/api/orders/statuses', handle(async () => {
 function presentOrder(row) {
   const lineEnrich = enrichOrderLineItems(row.line_items)
   const { line_items, ...rest } = row
-  return {
+  return enrichRefundFields({
     ...rest,
     ...lineEnrich,
     status: row.display_status || row.status,
-  }
+  })
 }
 
 function presentWcOnlyOrder(row) {
   const fromRaw = row.raw?.line_items ? enrichWcLineItems(row.raw.line_items) : {}
-  return {
+  return enrichRefundFields({
     salesorder_id: `wc-${row.order_id}`,
     salesorder_number: row.order_number,
     order_date: row.date_created ? String(row.date_created).slice(0, 10) : null,
@@ -381,7 +400,10 @@ function presentWcOnlyOrder(row) {
     products_text: fromRaw.products_text,
     segment: 'wc_only',
     order_source: 'woocommerce_only',
-  }
+    is_refunded: row.is_refunded,
+    wc_refunds: row.wc_refunds,
+    affiliate_referrals: row.affiliate_referrals,
+  })
 }
 
 const WC_ONLY_BASE = `
@@ -414,7 +436,10 @@ const WC_ONLY_BASE = `
       m.kind AS coupon_kind,
       m.rate AS coupon_rate,
       CASE WHEN m.affiliate_id IS NOT NULL AND m.kind = 'affiliate' AND m.rate IS NOT NULL AND w.net_sales IS NOT NULL
-           THEN ROUND((w.net_sales * m.rate / 100.0)::numeric, 2) END AS est_commission
+           THEN ROUND((w.net_sales * m.rate / 100.0)::numeric, 2) END AS est_commission,
+      (${WC_ONLY_IS_REFUNDED_SQL}) AS is_refunded,
+      (${WC_ONLY_WC_REFUNDS_SQL}) AS wc_refunds,
+      (${WC_ONLY_AFFILIATE_REFERRALS_SQL}) AS affiliate_referrals
     FROM wc_unsynced w
     LEFT JOIN coupon_map m ON m.coupon_code = LOWER(TRIM(w.coupon_code))
     LEFT JOIN awp_affiliates a ON a.affiliate_id = m.affiliate_id
@@ -637,7 +662,10 @@ app.get('/api/orders', handle(async req => {
           WHEN ${VALID_COUPON} AND m.kind = 'affiliate' THEN 'zoho'
         END AS affiliate_source,
         CASE WHEN m.affiliate_id IS NOT NULL AND m.kind = 'affiliate' AND m.rate IS NOT NULL
-             THEN ROUND(((${NET_SALES_EXPR}) * m.rate / 100.0)::numeric, 2) END AS est_commission
+             THEN ROUND(((${NET_SALES_EXPR}) * m.rate / 100.0)::numeric, 2) END AS est_commission,
+        (${IS_REFUNDED_SQL}) AS is_refunded,
+        (${WC_REFUNDS_SQL}) AS wc_refunds,
+        (${AFFILIATE_REFERRALS_SQL}) AS affiliate_referrals
       FROM sales_orders s
       LEFT JOIN wc_orders wo ON wo.order_number_norm = UPPER(TRIM(s.salesorder_number))
       LEFT JOIN coupon_map m ON m.coupon_code = ${COUPON_EXPR}
@@ -710,6 +738,16 @@ app.get('/api/orders', handle(async req => {
     },
     source: 'zoho_sales_orders',
   }
+}))
+
+app.get('/api/orders/wc-notes/:orderId', handle(async req => {
+  const orderId = parseInt(req.params.orderId, 10)
+  if (!orderId) {
+    const err = new Error('Invalid WooCommerce order ID')
+    err.status = 400
+    throw err
+  }
+  return fetchWcOrderNotes(orderId)
 }))
 
 // WC order IDs for affiliate-coupon orders (bulk Update in WooCommerce admin)

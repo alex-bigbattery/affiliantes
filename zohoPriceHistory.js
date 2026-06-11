@@ -89,10 +89,11 @@ function toIsoDateOnly(v) {
 
 // ── column specs (drive both JSON shape parity and Excel columns) ─────────────
 const DAILY_COLS = [
-  { header: 'SKU',  key: 'sku',         type: 'text',  width: 18 },
-  { header: 'Name', key: 'name',        type: 'text',  width: 42 },
-  { header: 'Date', key: 'price_date',  type: 'date',  width: 14 },
-  { header: 'Rate', key: 'rate',        type: 'money', width: 14 },
+  { header: 'SKU',          key: 'sku',         type: 'text',  width: 18 },
+  { header: 'Name',         key: 'name',        type: 'text',  width: 42 },
+  { header: 'Date',         key: 'price_date',  type: 'date',  width: 14 },
+  { header: 'Previous Rate', key: 'prev_rate',  type: 'money', width: 14 },
+  { header: 'Rate',         key: 'rate',        type: 'money', width: 14 },
 ]
 const SNAPSHOT_COLS = [
   { header: 'SKU',                key: 'sku',                     type: 'text',     width: 18 },
@@ -155,7 +156,8 @@ function dailyQuery(f) {
         LAG(rate) OVER (PARTITION BY item_id ORDER BY price_date) AS prev_rate
       FROM daily_raw
     )
-    SELECT d.item_id, d.sku, d.name, d.rate, d.price_date::text AS price_date
+    SELECT d.item_id, d.sku, d.name, d.rate, d.prev_rate,
+           d.price_date::text AS price_date
     FROM daily d${statusJoin}${where}`
 
   return { sql, vals, orderBy: ` ORDER BY d.sku ASC, d.price_date DESC` }
@@ -193,6 +195,7 @@ function jsonRows(kind, rows) {
   return rows.map(r => {
     const out = { ...r }
     if ('rate' in out) out.rate = num(out.rate)
+    if ('prev_rate' in out) out.prev_rate = num(out.prev_rate)
     if ('price_date' in out && out.price_date != null) {
       out.price_date = toIsoDateOnly(out.price_date)
     }

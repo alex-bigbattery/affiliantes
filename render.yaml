@@ -28,6 +28,10 @@ services:
       # Supabase project URL (public, not secret):
       - key: SUPABASE_URL
         value: "https://evgmeszyxjzrrbrzznhv.supabase.co"
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
       - key: SYNC_INTERVAL_MINUTES
         value: "30"
       # Your Vercel frontend URL(s), comma-separated — set after deploying frontend:

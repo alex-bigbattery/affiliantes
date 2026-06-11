@@ -2,9 +2,10 @@ import { NavLink } from 'react-router-dom'
 import { useEffect, useState } from 'react'
 import {
   LayoutDashboard, Users, ArrowLeftRight, DollarSign,
-  Eye, Tag, Image, RefreshCw, Zap, Database, Menu, X, ShoppingCart, LineChart
+  Eye, Tag, Image, RefreshCw, Zap, Database, Menu, X, ShoppingCart, LineChart, LogOut
 } from 'lucide-react'
 import { api } from '../api'
+import { useAuth } from '../context/AuthContext.jsx'
 
 const links = [
   { to: '/',            label: 'Dashboard',   icon: LayoutDashboard },
@@ -63,6 +64,7 @@ function SyncFooter() {
 
 export default function Layout({ children }) {
   const [open, setOpen] = useState(false)
+  const { user, signOut } = useAuth()
   const close = () => setOpen(false)
 
   return (
@@ -110,6 +112,18 @@ export default function Layout({ children }) {
           ))}
         </nav>
 
+        <div className="px-3 py-2 border-t border-white/10">
+          {user?.email && (
+            <div className="text-navy-100/50 text-xs truncate mb-2" title={user.email}>{user.email}</div>
+          )}
+          <button
+            type="button"
+            onClick={signOut}
+            className="flex items-center gap-2 w-full px-2 py-1.5 rounded-lg text-xs text-navy-100/70 hover:bg-white/10 hover:text-white transition-colors"
+          >
+            <LogOut size={14} /> Sign out
+          </button>
+        </div>
         <SyncFooter />
       </aside>
 
@@ -180,13 +194,15 @@ export function Empty({ label = 'No data' }) {
   return <div className="py-16 text-center text-gray-400 text-sm">{label}</div>
 }
 
-export function Modal({ title, onClose, children, width = 'max-w-lg' }) {
+export function Modal({ title, onClose, children, width = 'max-w-lg', closable = true }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
       <div className={`bg-white rounded-xl shadow-xl w-full ${width}`}>
         <div className="flex items-center justify-between px-5 py-4 border-b">
           <h2 className="font-semibold text-gray-900">{title}</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
+          {closable && onClose && (
+            <button type="button" onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
+          )}
         </div>
         <div className="p-5">{children}</div>
       </div>

@@ -65,6 +65,23 @@ async function wooGet(endpoint, params = {}) {
   return res
 }
 
+export async function fetchWcOrderNotes(orderId) {
+  if (!wooConfigured()) {
+    return { configured: false, notes: [] }
+  }
+  const res = await wooGet(`/orders/${orderId}/notes`, { per_page: 100, order: 'desc' })
+  const notes = Array.isArray(res.data) ? res.data : []
+  return {
+    configured: true,
+    notes: notes.map(n => ({
+      id: n.id,
+      date: n.date_created || n.date_created_gmt,
+      text: String(n.note || '').replace(/<[^>]+>/g, '').trim(),
+      customer_note: !!n.customer_note,
+    })),
+  }
+}
+
 async function fetchOrders({ after } = {}) {
   const all = []
   let page = 1

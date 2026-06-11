@@ -73,6 +73,8 @@ const EXPORT_COLUMNS = [
   { header: 'Revenue',         value: o => Number(o.total || 0) },
   { header: 'Net Sales',       value: o => o.net_sales != null ? Number(o.net_sales) : '' },
   { header: 'Est. commission', value: o => o.est_commission != null ? Number(o.est_commission) : '' },
+  { header: 'Refunded',        value: o => o.is_refunded ? 'Yes' : 'No' },
+  { header: 'Refund amount',   value: o => o.refund_amount != null ? Number(o.refund_amount) : '' },
   { header: 'Status',          value: o => o.status || '' },
   { header: 'Reference',       value: o => o.reference_number || '' },
 ]
@@ -166,6 +168,124 @@ function WcUpdateCell({ o }) {
         Abrir WC
       </a>
       <div className="text-[10px] text-gray-400 mt-0.5">luego Update</div>
+    </td>
+  )
+}
+
+function RefundCell({ o }) {
+  const [open, setOpen] = useState(false)
+  const [notes, setNotes] = useState(null)
+  const [notesError, setNotesError] = useState(null)
+  const [loadingNotes, setLoadingNotes] = useState(false)
+  const wrapRef = useRef(null)
+
+  useEffect(() => {
+    const close = (e) => { if (!wrapRef.current?.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [])
+
+  const loadNotes = async () => {
+    if (!o.wc_order_id || notes || loadingNotes) return
+    setLoadingNotes(true)
+    setNotesError(null)
+    try {
+      const res = await api.orderWcNotes(o.wc_order_id)
+      setNotes(res)
+    } catch (e) {
+      setNotesError(e.message || 'Could not load order notes')
+    } finally {
+      setLoadingNotes(false)
+    }
+  }
+
+  const toggle = () => {
+    const next = !open
+    setOpen(next)
+    if (next) loadNotes()
+  }
+
+  const details = o.refund_details || []
+  const referrals = o.affiliate_referrals || []
+  const noteItems = notes?.notes || []
+
+  return (
+    <td className="td text-center whitespace-nowrap">
+      <div ref={wrapRef} className="relative inline-flex items-center justify-center gap-1">
+        {o.is_refunded
+          ? <span className="inline-flex px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">Yes</span>
+          : <span className="text-xs text-gray-400">No</span>}
+        <button type="button" onClick={toggle}
+          className="p-0.5 rounded-full text-gray-400 hover:text-navy-700 hover:bg-gray-100"
+          title="Refund details & WooCommerce order notes"
+          aria-label="Refund details">
+          <Info size={14} />
+        </button>
+        {open && (
+          <div className="absolute right-0 top-full z-50 mt-1 w-[22rem] max-h-96 overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-xl text-left p-3 text-xs text-gray-700">
+            <p className="font-semibold text-sm text-navy-900 mb-2">Refund & order history</p>
+
+            {o.is_refunded ? (
+              <div className="mb-3">
+                <p className="font-medium text-red-700 mb-1">Refunded order</p>
+                {o.refund_amount != null && (
+                  <p className="text-gray-600">Total refunded: <span className="font-semibold">{fmt(o.refund_amount)}</span></p>
+                )}
+                {details.length > 0 && (
+                  <ul className="mt-1 space-y-0.5">
+                    {details.map((d, i) => (
+                      <li key={d.id || i} className="text-gray-600">
+                        {fmt(d.amount)}{d.reason ? ` — ${d.reason}` : ''}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            ) : (
+              <p className="mb-3 text-gray-500">No refund detected in WooCommerce or AffiliateWP.</p>
+            )}
+
+            {referrals.length > 0 && (
+              <div className="mb-3 border-t border-gray-100 pt-2">
+                <p className="font-medium text-gray-800 mb-1">Affiliate referrals</p>
+                <ul className="space-y-1.5">
+                  {referrals.map(r => (
+                    <li key={r.referral_id} className="rounded bg-purple-50 px-2 py-1.5 text-purple-900">
+                      <span className="font-mono">#{r.referral_id}</span>
+                      {r.amount != null && <> · {fmt(r.amount)}</>}
+                      {r.status && <span className="capitalize"> · {r.status}</span>}
+                      {r.description && <div className="mt-0.5 text-purple-800">{r.description}</div>}
+                      {r.date && <div className="text-[10px] text-purple-600/80 mt-0.5">{fmtDateTime(r.date)}</div>}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            <div className="border-t border-gray-100 pt-2">
+              <p className="font-medium text-gray-800 mb-1">WooCommerce order notes</p>
+              {!o.wc_order_id && <p className="text-gray-400">No WC order linked.</p>}
+              {o.wc_order_id && loadingNotes && <p className="text-gray-400">Loading notes…</p>}
+              {o.wc_order_id && notesError && <p className="text-red-600">{notesError}</p>}
+              {o.wc_order_id && notes && !notes.configured && (
+                <p className="text-gray-400">WooCommerce API not configured on server.</p>
+              )}
+              {noteItems.length > 0 ? (
+                <ul className="space-y-2">
+                  {noteItems.map(n => (
+                    <li key={n.id} className="rounded bg-violet-50 px-2 py-1.5">
+                      <div className="text-gray-800">{n.text}</div>
+                      <div className="text-[10px] text-gray-500 mt-0.5">{fmtDateTime(n.date)}</div>
+                    </li>
+                  ))}
+                </ul>
+              ) : o.wc_order_id && notes?.configured && !loadingNotes ? (
+                <p className="text-gray-400">No notes on this order.</p>
+              ) : null}
+            </div>
+          </div>
+        )}
+      </div>
     </td>
   )
 }
@@ -318,18 +438,18 @@ function tableHeaders(tab) {
   const affiliateBasic = ['Affiliate', 'Email']
 
   if (tab === 'wc_affiliate') {
-    return ['Order #', 'WC ID', 'Date', 'Customer', ...detail, 'Coupon', ...affiliate, ...money(true), 'Status', updateCol]
+    return ['Order #', 'WC ID', 'Date', 'Customer', ...detail, 'Coupon', ...affiliate, ...money(true), 'Refund', 'Status', updateCol]
   }
   if (tab === 'zoho_affiliate') {
-    return ['Order #', 'WC ID', 'Date', 'Customer', ...detail, 'Coupon', ...affiliate, ...money(), 'Status', updateCol]
+    return ['Order #', 'WC ID', 'Date', 'Customer', ...detail, 'Coupon', ...affiliate, ...money(), 'Refund', 'Status', updateCol]
   }
   if (tab === 'affiliate_coupon') {
-    return ['Order #', 'WC ID', 'Source', 'Date', 'Customer', ...detail, 'Coupon', ...affiliate, ...money(true), 'Status', updateCol]
+    return ['Order #', 'WC ID', 'Source', 'Date', 'Customer', ...detail, 'Coupon', ...affiliate, ...money(true), 'Refund', 'Status', updateCol]
   }
   if (tab === 'bb' || tab === 'so' || tab === 'wc_only') {
-    return ['Order #', 'WC ID', 'Date', 'Customer', ...detail, 'Coupon', ...affiliateBasic, ...money(), 'Status', 'Reference', updateCol]
+    return ['Order #', 'WC ID', 'Date', 'Customer', ...detail, 'Coupon', ...affiliateBasic, ...money(), 'Refund', 'Status', 'Reference', updateCol]
   }
-  return ['Order #', 'WC ID', 'Type', 'Date', 'Customer', ...detail, 'Coupon', ...affiliateBasic, ...money(true), 'Status', updateCol]
+  return ['Order #', 'WC ID', 'Type', 'Date', 'Customer', ...detail, 'Coupon', ...affiliateBasic, ...money(true), 'Refund', 'Status', updateCol]
 }
 
 function OrderRow({ o, tab }) {
@@ -348,6 +468,7 @@ function OrderRow({ o, tab }) {
         <td className="td font-mono text-sm">{o.coupon_code}</td>
         <AffiliateCell o={o} showId />
         <MoneyCells o={o} showCommission />
+        <RefundCell o={o} />
         <td className="td text-sm capitalize text-gray-600">{o.status || '—'}</td>
         <WcUpdateCell o={o} />
       </tr>
@@ -365,6 +486,7 @@ function OrderRow({ o, tab }) {
         <td className="td font-mono text-sm">{o.coupon_code}</td>
         <AffiliateCell o={o} showId />
         <MoneyCells o={o} />
+        <RefundCell o={o} />
         <td className="td text-sm capitalize text-gray-600">{o.status || '—'}</td>
         <WcUpdateCell o={o} />
       </tr>
@@ -383,6 +505,7 @@ function OrderRow({ o, tab }) {
         <td className="td font-mono text-sm">{o.coupon_code}</td>
         <AffiliateCell o={o} showId />
         <MoneyCells o={o} showCommission />
+        <RefundCell o={o} />
         <td className="td text-sm capitalize text-gray-600">{o.status || '—'}</td>
         <WcUpdateCell o={o} />
       </tr>
@@ -401,6 +524,7 @@ function OrderRow({ o, tab }) {
         <td className="td font-mono text-sm">{o.coupon_code || <span className="text-gray-300">—</span>}</td>
         <AffiliateCell o={o} showEmail showId={false} />
         <MoneyCells o={o} />
+        <RefundCell o={o} />
         <td className="td text-sm capitalize text-gray-600">{o.status || '—'}</td>
         <td className="td text-xs text-gray-500 font-mono">{tab === 'wc_only' ? 'WC only' : (o.reference_number || '—')}</td>
         <WcUpdateCell o={o} />
@@ -419,6 +543,7 @@ function OrderRow({ o, tab }) {
       <td className="td font-mono text-sm">{o.coupon_code || <span className="text-gray-300">—</span>}</td>
       <AffiliateCell o={o} showEmail showId={false} />
       <MoneyCells o={o} showCommission />
+      <RefundCell o={o} />
       <td className="td text-sm capitalize text-gray-600">{o.status || '—'}</td>
       <WcUpdateCell o={o} />
     </tr>

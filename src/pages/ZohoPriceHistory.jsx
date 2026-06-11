@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
-import { Search, Download, ChevronLeft, ChevronRight, Info } from 'lucide-react'
-import { api, fmt, fmtDate } from '../api'
+import { Search, Download, ChevronLeft, ChevronRight, Info, ArrowRight, Minus } from 'lucide-react'
+import { api, downloadApi, fmt, fmtDate } from '../api'
 import { PageHeader, Spinner, ErrorMsg, Empty } from '../components/Layout'
 
 const PAGE_SIZES = [50, 250, 1000]
@@ -13,7 +13,11 @@ const TABS = [
   { key: 'runs',      label: 'Runs' },
 ]
 
-// datetime rendered in local tz, with a UTC tooltip badge
+const DAILY_VIEWS = [
+  { key: 'changes',  label: 'Price changes' },
+  { key: 'calendar', label: 'Full calendar' },
+]
+
 function TimeCell({ value }) {
   if (!value) return <span className="text-gray-300">—</span>
   const d = new Date(value)
@@ -28,51 +32,157 @@ function TimeCell({ value }) {
   )
 }
 
-const Mono = ({ children }) => <span className="font-mono text-xs text-gray-600">{children || '—'}</span>
-
-// Column defs per sub-tab (header + cell renderer)
-const COLUMNS = {
-  daily: [
-    { h: 'SKU',  cell: r => <span className="font-mono text-xs">{r.sku || '—'}</span> },
-    { h: 'Name', cell: r => <span className="text-sm">{r.name || '—'}</span>, wide: true },
-    { h: 'Date', cell: r => <span className="text-sm text-gray-600 whitespace-nowrap">{fmtDate(r.price_date)}</span> },
-    { h: 'Rate', cell: r => <span className="text-sm font-medium">{fmt(r.rate)}</span>, right: true },
-  ],
-  snapshots: [
-    { h: 'SKU',  cell: r => <span className="font-mono text-xs">{r.sku || '—'}</span> },
-    { h: 'Name', cell: r => <span className="text-sm">{r.name || '—'}</span>, wide: true },
-    { h: 'Rate', cell: r => <span className="text-sm font-medium">{fmt(r.rate)}</span>, right: true },
-    { h: 'Status', cell: r => (
-        <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${
-          r.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>{r.status || '—'}</span>) },
-    { h: 'Captured At',        cell: r => <span className="text-xs text-gray-500"><TimeCell value={r.captured_at} /></span> },
-    { h: 'Zoho Last Modified', cell: r => <span className="text-xs text-gray-500"><TimeCell value={r.zoho_last_modified_time} /></span> },
-  ],
-  runs: [
-    { h: 'Started At',  cell: r => <span className="text-xs text-gray-500"><TimeCell value={r.started_at} /></span> },
-    { h: 'Finished At', cell: r => <span className="text-xs text-gray-500"><TimeCell value={r.finished_at} /></span> },
-    { h: 'Status', cell: r => (
-        <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${
-          r.status === 'ok' ? 'bg-green-100 text-green-700'
-          : r.status === 'running' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'}`}>{r.status || '—'}</span>) },
-    { h: 'Items',   cell: r => <span className="text-sm">{r.item_count ?? '—'}</span>, right: true },
-    { h: 'Changed', cell: r => <span className="text-sm">{r.changed_count ?? '—'}</span>, right: true },
-  ],
+function itemLabel(sku, name) {
+  const s = (sku || '').trim()
+  const n = (name || '').trim()
+  if (!s && !n) return { primary: '—', secondary: null }
+  if (!s || s === n) return { primary: n || s, secondary: null }
+  if (n && n.includes(s)) return { primary: n, secondary: null }
+  return { primary: n || s, secondary: s }
 }
+
+function ItemCell({ sku, name }) {
+  const { primary, secondary } = itemLabel(sku, name)
+  return (
+    <div className="min-w-0">
+      <div className="text-sm text-gray-900 truncate" title={primary}>{primary}</div>
+      {secondary && <div className="font-mono text-[11px] text-gray-400 truncate" title={secondary}>{secondary}</div>}
+    </div>
+  )
+}
+
+function pctChange(prev, next) {
+  if (prev == null || next == null || prev === 0) return null
+  return ((next - prev) / prev) * 100
+}
+
+function RateChangeCell({ prev, rate }) {
+  if (prev == null || prev === rate) {
+    return <span className="text-sm font-medium text-gray-900">{fmt(rate)}</span>
+  }
+  const pct = pctChange(prev, rate)
+  const up = rate > prev
+  return (
+    <div className="flex items-center justify-end gap-2 whitespace-nowrap">
+      <span className="text-xs text-gray-400 line-through">{fmt(prev)}</span>
+      <ArrowRight size={12} className="text-gray-300 shrink-0" />
+      <span className="text-sm font-semibold text-gray-900">{fmt(rate)}</span>
+      {pct != null && (
+        <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
+          up ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'}`}>
+          {up ? '+' : ''}{pct.toFixed(1)}%
+        </span>
+      )}
+    </div>
+  )
+}
+
+function groupDailyRows(rows) {
+  const groups = []
+  const byId = new Map()
+  for (const r of rows) {
+    if (!byId.has(r.item_id)) {
+      const g = { item_id: r.item_id, sku: r.sku, name: r.name, rows: [] }
+      byId.set(r.item_id, g)
+      groups.push(g)
+    }
+    byId.get(r.item_id).rows.push(r)
+  }
+  return groups
+}
+
+const SNAPSHOT_COLS = [
+  { h: 'Item', cell: r => <ItemCell sku={r.sku} name={r.name} />, wide: true },
+  { h: 'Rate', cell: r => <span className="text-sm font-medium">{fmt(r.rate)}</span>, right: true },
+  { h: 'Status', cell: r => (
+      <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${
+        r.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>{r.status || '—'}</span>) },
+  { h: 'Captured At',        cell: r => <span className="text-xs text-gray-500"><TimeCell value={r.captured_at} /></span> },
+  { h: 'Zoho Last Modified', cell: r => <span className="text-xs text-gray-500"><TimeCell value={r.zoho_last_modified_time} /></span> },
+]
+
+const RUN_COLS = [
+  { h: 'Started At',  cell: r => <span className="text-xs text-gray-500"><TimeCell value={r.started_at} /></span> },
+  { h: 'Finished At', cell: r => <span className="text-xs text-gray-500"><TimeCell value={r.finished_at} /></span> },
+  { h: 'Status', cell: r => (
+      <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${
+        r.status === 'ok' ? 'bg-green-100 text-green-700'
+        : r.status === 'running' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'}`}>{r.status || '—'}</span>) },
+  { h: 'Items',   cell: r => <span className="text-sm">{r.item_count ?? '—'}</span>, right: true },
+  { h: 'Changed', cell: r => <span className="text-sm">{r.changed_count ?? '—'}</span>, right: true },
+]
 
 const rowKey = (tab, r, i) =>
   tab === 'daily' ? `${r.item_id}-${r.price_date}-${i}`
   : tab === 'snapshots' ? r.id
   : (r.id ?? r.run_id)
 
+function DailyChangesTable({ rows }) {
+  return (
+    <table className="w-full">
+      <thead>
+        <tr className="border-b bg-gray-50/80">
+          <th className="th w-[42%]">Item</th>
+          <th className="th w-28">Date</th>
+          <th className="th text-right">Price change</th>
+        </tr>
+      </thead>
+      <tbody className="divide-y divide-gray-100">
+        {rows.map((r, i) => (
+          <tr key={rowKey('daily', r, i)} className="tr-hover">
+            <td className="td max-w-md"><ItemCell sku={r.sku} name={r.name} /></td>
+            <td className="td text-sm text-gray-600 whitespace-nowrap">{fmtDate(r.price_date)}</td>
+            <td className="td text-right"><RateChangeCell prev={r.prev_rate} rate={r.rate} /></td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
+function DailyCalendarTable({ groups }) {
+  return (
+    <table className="w-full">
+      <thead>
+        <tr className="border-b bg-gray-50/80">
+          <th className="th w-[42%]">Item</th>
+          <th className="th w-28">Date</th>
+          <th className="th text-right w-32">Rate</th>
+        </tr>
+      </thead>
+      <tbody>
+        {groups.map(g => {
+          const stable = g.rows.every(r => r.rate === g.rows[0]?.rate)
+          return g.rows.map((r, i) => (
+            <tr key={`${g.item_id}-${r.price_date}`} className={`tr-hover ${i === 0 ? 'border-t border-gray-200' : ''}`}>
+              {i === 0 && (
+                <td className="td align-top max-w-md" rowSpan={g.rows.length}>
+                  <ItemCell sku={g.sku} name={g.name} />
+                  {stable && g.rows.length > 1 && (
+                    <div className="mt-1 flex items-center gap-1 text-[11px] text-gray-400">
+                      <Minus size={10} /> Same rate all {g.rows.length} days
+                    </div>
+                  )}
+                </td>
+              )}
+              <td className="td text-sm text-gray-600 whitespace-nowrap">{fmtDate(r.price_date)}</td>
+              <td className="td text-right text-sm font-medium">{fmt(r.rate)}</td>
+            </tr>
+          ))
+        })}
+      </tbody>
+    </table>
+  )
+}
+
 export default function ZohoPriceHistory() {
   const [tab, setTab] = useState('daily')
-  const [from, setFrom] = useState(daysAgoISO(30))
+  const [dailyView, setDailyView] = useState('changes')
+  const [from, setFrom] = useState(daysAgoISO(7))
   const [to, setTo]     = useState(todayISO())
   const [q, setQ]       = useState('')
   const [qApplied, setQApplied] = useState('')
   const [status, setStatus]     = useState('all')
-  const [onlyChanges, setOnlyChanges] = useState(false)
   const [limit, setLimit] = useState(250)
   const [offset, setOffset] = useState(0)
 
@@ -80,23 +190,22 @@ export default function ZohoPriceHistory() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
-  // debounce free-text search
+  const onlyChanges = tab === 'daily' && dailyView === 'changes'
+
   useEffect(() => {
     const t = setTimeout(() => { setQApplied(q.trim()); setOffset(0) }, 400)
     return () => clearTimeout(t)
   }, [q])
 
-  // reset paging when filters/tab change
-  useEffect(() => { setOffset(0) }, [tab, from, to, status, onlyChanges, limit])
+  useEffect(() => { setOffset(0) }, [tab, from, to, status, dailyView, limit])
 
-  // build query params for the active tab (only params that tab allows)
   const params = useMemo(() => {
     const p = { from, to, limit, offset }
     if (tab !== 'runs') {
       if (qApplied) p.q = qApplied
       if (status !== 'all') p.status = status
     }
-    if (tab === 'daily' && onlyChanges) p.onlyChanges = true
+    if (onlyChanges) p.onlyChanges = true
     return p
   }, [tab, from, to, qApplied, status, onlyChanges, limit, offset])
 
@@ -111,22 +220,22 @@ export default function ZohoPriceHistory() {
 
   useEffect(() => { load() }, [load])
 
+  const dailyGroups = useMemo(
+    () => (tab === 'daily' && dailyView === 'calendar' ? groupDailyRows(data.rows) : []),
+    [tab, dailyView, data.rows],
+  )
+
   const exportXlsx = () => {
     const p = { from, to }
     if (tab !== 'runs') {
       if (qApplied) p.q = qApplied
       if (status !== 'all') p.status = status
     }
-    if (tab === 'daily' && onlyChanges) p.onlyChanges = true
-    const url = api.zohoExportUrl(tab, p)
-    const a = document.createElement('a')
-    a.href = url
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
+    if (onlyChanges) p.onlyChanges = true
+    downloadApi(`/zoho-price-history/${tab}/export`, p, `zoho-price-history-${tab}.xlsx`).catch(e => setError(e.message))
   }
 
-  const cols = COLUMNS[tab]
+  const cols = tab === 'snapshots' ? SNAPSHOT_COLS : tab === 'runs' ? RUN_COLS : null
   const showStatus = tab !== 'runs'
   const showSearch = tab !== 'runs'
   const pageStart = data.total === 0 ? 0 : offset + 1
@@ -144,7 +253,6 @@ export default function ZohoPriceHistory() {
         }
       />
 
-      {/* Sub-tabs */}
       <div className="flex gap-1 px-4 sm:px-6 mb-3">
         {TABS.map(t => (
           <button key={t.key} onClick={() => setTab(t.key)}
@@ -155,7 +263,6 @@ export default function ZohoPriceHistory() {
         ))}
       </div>
 
-      {/* Filters */}
       <div className="flex flex-wrap items-center gap-3 px-4 sm:px-6 mb-4">
         <div className="flex items-center gap-2">
           <input type="date" className="input w-40" value={from} onChange={e => setFrom(e.target.value)} max={to} />
@@ -176,42 +283,59 @@ export default function ZohoPriceHistory() {
           </select>
         )}
         {tab === 'daily' && (
-          <label className="flex items-center gap-2 text-sm text-gray-600">
-            <input type="checkbox" checked={onlyChanges} onChange={e => setOnlyChanges(e.target.checked)} />
-            Only days with price change
-          </label>
+          <div className="flex rounded-lg border border-gray-200 p-0.5 bg-gray-50">
+            {DAILY_VIEWS.map(v => (
+              <button key={v.key} type="button" onClick={() => setDailyView(v.key)}
+                className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${
+                  dailyView === v.key ? 'bg-white text-navy-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
+                {v.label}
+              </button>
+            ))}
+          </div>
         )}
         <select className="select w-28" value={limit} onChange={e => setLimit(Number(e.target.value))} title="Page size">
           {PAGE_SIZES.map(n => <option key={n} value={n}>{n} / page</option>)}
         </select>
       </div>
 
+      {tab === 'daily' && !loading && (
+        <p className="px-4 sm:px-6 -mt-2 mb-3 text-xs text-gray-500">
+          {onlyChanges
+            ? `${data.total.toLocaleString()} price change${data.total === 1 ? '' : 's'} in range — items with a stable rate are hidden.`
+            : `${dailyGroups.length.toLocaleString()} item${dailyGroups.length === 1 ? '' : 's'}, ${data.total.toLocaleString()} day row${data.total === 1 ? '' : 's'} — grouped by SKU.`}
+        </p>
+      )}
+
       {error && <ErrorMsg error={error} />}
 
       <div className="px-4 sm:px-6 pb-8">
         <div className="card overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b">
-                {cols.map(c => <th key={c.h} className={`th ${c.right ? 'text-right' : ''}`}>{c.h}</th>)}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {loading
-                ? <tr><td colSpan={cols.length}><Spinner /></td></tr>
-                : data.rows.length === 0
-                  ? <tr><td colSpan={cols.length}><Empty label="No rows for these filters" /></td></tr>
-                  : data.rows.map((r, i) => (
-                    <tr key={rowKey(tab, r, i)} className="tr-hover">
-                      {cols.map(c => <td key={c.h} className={`td ${c.right ? 'text-right' : ''} ${c.wide ? 'max-w-xs truncate' : ''}`}>{c.cell(r)}</td>)}
-                    </tr>
-                  ))
-              }
-            </tbody>
-          </table>
+          {loading ? (
+            <div className="p-8"><Spinner /></div>
+          ) : data.rows.length === 0 ? (
+            <Empty label={onlyChanges ? 'No price changes in this date range' : 'No rows for these filters'} />
+          ) : tab === 'daily' ? (
+            onlyChanges
+              ? <DailyChangesTable rows={data.rows} />
+              : <DailyCalendarTable groups={dailyGroups} />
+          ) : (
+            <table className="w-full">
+              <thead>
+                <tr className="border-b bg-gray-50/80">
+                  {cols.map(c => <th key={c.h} className={`th ${c.right ? 'text-right' : ''}`}>{c.h}</th>)}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {data.rows.map((r, i) => (
+                  <tr key={rowKey(tab, r, i)} className="tr-hover">
+                    {cols.map(c => <td key={c.h} className={`td ${c.right ? 'text-right' : ''} ${c.wide ? 'max-w-md' : ''}`}>{c.cell(r)}</td>)}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
 
-        {/* Pagination */}
         <div className="flex items-center justify-between mt-3 text-sm text-gray-500">
           <span>{loading ? 'Loading…' : `Showing ${pageStart}–${pageEnd} of ${data.total.toLocaleString()}`}</span>
           <div className="flex gap-2">

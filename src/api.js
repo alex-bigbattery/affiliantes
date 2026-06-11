@@ -2,12 +2,21 @@
 // Production (Vercel): set VITE_API_URL to the Render backend URL.
 const BASE = (import.meta.env.VITE_API_URL || '').replace(/\/+$/, '') + '/api'
 
+let accessToken = null
+export function setApiAccessToken(token) { accessToken = token }
+
+function authHeaders(extra = {}) {
+  const h = { ...extra }
+  if (accessToken) h.Authorization = `Bearer ${accessToken}`
+  return h
+}
+
 async function req(method, path, body, params) {
   const url = new URL(BASE + path, window.location.origin)
   if (params) Object.entries(params).forEach(([k, v]) => v != null && v !== '' && url.searchParams.set(k, v))
   const res = await fetch(url, {
     method,
-    headers: body ? { 'Content-Type': 'application/json' } : undefined,
+    headers: authHeaders(body ? { 'Content-Type': 'application/json' } : {}),
     body: body ? JSON.stringify(body) : undefined,
   })
   const text = await res.text()
@@ -65,6 +74,7 @@ export const api = {
   // Orders (Zoho sales_orders)
   orders: (p) => get('/orders', p),
   orderStatuses: () => get('/orders/statuses'),
+  orderWcNotes: (id) => get(`/orders/wc-notes/${id}`),
   ordersWcIds: (p) => get('/orders/wc-ids', p),
   wcBulkUpdate: (d) => post('/orders/wc-bulk-update', d),
   wcUpdateOrder: (id) => post(`/orders/wc-update/${id}`),
@@ -104,6 +114,29 @@ export const api = {
   zohoSnapshots: (p) => get('/zoho-price-history/snapshots', p),
   zohoRuns:      (p) => get('/zoho-price-history/runs', p),
   zohoExportUrl: (kind, p) => apiUrl(`/zoho-price-history/${kind}/export`, p),
+
+  completePasswordSetup: () => post('/auth/password-setup-complete'),
+}
+
+/** Download a protected GET endpoint (e.g. Excel export) with the current session token. */
+export async function downloadApi(path, params, filename = 'export.xlsx') {
+  const url = new URL(BASE + path, window.location.origin)
+  if (params) Object.entries(params).forEach(([k, v]) => v != null && v !== '' && url.searchParams.set(k, String(v)))
+  const res = await fetch(url, { headers: authHeaders() })
+  if (!res.ok) {
+    const text = await res.text()
+    let msg = `HTTP ${res.status}`
+    try { msg = JSON.parse(text).error || msg } catch { /* ignore */ }
+    throw new Error(msg)
+  }
+  const blob = await res.blob()
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(a.href)
 }
 
 export function fmt(n) {
