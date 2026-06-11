@@ -7,6 +7,16 @@ import {
   AuthShell, AuthField, UsernameField, AuthError, OtpInput, AuthSubmit,
 } from '../components/AuthShell'
 
+function totpQrSrc(qrCode) {
+  if (!qrCode) return ''
+  // Supabase returns a ready-to-use data URL; only wrap raw SVG strings.
+  if (qrCode.startsWith('data:')) return qrCode
+  if (qrCode.trimStart().startsWith('<')) {
+    return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(qrCode)}`
+  }
+  return qrCode
+}
+
 function MfaEnroll({ onDone }) {
   const { supabase } = useAuth()
   const [factorId, setFactorId] = useState('')
@@ -22,7 +32,7 @@ function MfaEnroll({ onDone }) {
       const { data, error: err } = await supabase.auth.mfa.enroll({ factorType: 'totp', friendlyName: 'Authenticator app' })
       if (err) { setError(err.message); return }
       setFactorId(data.id)
-      setQr(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(data.totp.qr_code)}`)
+      setQr(totpQrSrc(data.totp.qr_code))
       setSecret(data.totp.secret)
     })()
   }, [supabase])
@@ -73,14 +83,20 @@ function MfaEnroll({ onDone }) {
             <div className="w-52 h-52 rounded-2xl bg-gray-100 animate-pulse" />
           )}
           {secret && (
-            <button
-              type="button"
-              onClick={copySecret}
-              className="mt-3 flex items-center gap-1.5 text-xs text-gray-500 hover:text-navy-700 transition-colors"
-            >
-              {copied ? <Check size={13} className="text-green-600" /> : <Copy size={13} />}
-              {copied ? 'Copied' : 'Copy setup key'}
-            </button>
+            <div className="mt-3 w-full max-w-[13rem] text-center">
+              <p className="text-[10px] uppercase tracking-wide text-gray-400 mb-1">Manual setup key</p>
+              <p className="font-mono text-xs text-gray-700 break-all select-all bg-gray-50 rounded-lg px-2 py-1.5 border border-gray-200">
+                {secret}
+              </p>
+              <button
+                type="button"
+                onClick={copySecret}
+                className="mt-2 inline-flex items-center gap-1.5 text-xs text-gray-500 hover:text-navy-700 transition-colors"
+              >
+                {copied ? <Check size={13} className="text-green-600" /> : <Copy size={13} />}
+                {copied ? 'Copied' : 'Copy setup key'}
+              </button>
+            </div>
           )}
         </div>
 
