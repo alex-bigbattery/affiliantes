@@ -21,17 +21,29 @@ const links = [
 ]
 
 function SyncFooter() {
+  const { step, session } = useAuth()
   const [info, setInfo] = useState(null)
   const [syncing, setSyncing] = useState(false)
+  const canSync = step === 'ready' && !!session?.access_token
 
-  const load = () =>
+  const load = () => {
+    if (!canSync) return
     api.syncStatus().then(setInfo).catch(() => {})
+  }
 
-  useEffect(() => { load(); const t = setInterval(load, 15000); return () => clearInterval(t) }, [])
+  useEffect(() => {
+    if (!canSync) return
+    load()
+    const t = setInterval(load, 15000)
+    return () => clearInterval(t)
+  }, [canSync])
 
   const triggerSync = async () => {
+    if (!canSync) return
     setSyncing(true)
-    await api.runSync()
+    try {
+      await api.runSync()
+    } catch { /* ignore */ }
     setTimeout(() => { load(); setSyncing(false) }, 2000)
   }
 

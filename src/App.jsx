@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider } from './context/AuthContext.jsx'
 import Layout from './components/Layout'
 import Dashboard from './pages/Dashboard'
@@ -19,6 +19,7 @@ export default function App() {
       <BrowserRouter>
         <Layout>
           <Routes>
+            <Route path="/login" element={<Navigate to="/" replace />} />
             <Route path="/" element={<Dashboard />} />
             <Route path="/affiliates" element={<Affiliates />} />
             <Route path="/affiliates/:id" element={<AffiliateDetail />} />
@@ -30,6 +31,7 @@ export default function App() {
             <Route path="/zoho-price-history" element={<ZohoPriceHistory />} />
             <Route path="/creatives" element={<Creatives />} />
             <Route path="/sync" element={<Sync />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </Layout>
       </BrowserRouter>
