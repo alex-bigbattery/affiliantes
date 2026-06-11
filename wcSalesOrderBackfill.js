@@ -45,9 +45,11 @@ function buildZohoLineItems(wcRaw) {
 
 export function buildSalesOrderFromWc(row) {
   const wcRaw = parseWcRaw(row.raw)
-  const orderDate = row.date_created
-    ? String(row.date_created).slice(0, 10)
-    : null
+  let orderDate = null
+  if (row.date_created) {
+    const d = new Date(row.date_created)
+    orderDate = Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10)
+  }
   const lineItems = buildZohoLineItems(wcRaw)
   const rawJson = {
     source: 'wc_backfill',
