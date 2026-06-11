@@ -1,6 +1,6 @@
 import { useContext, useEffect, useState, useCallback, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
-import { api, setApiAccessToken } from '../api'
+import { api, setApiAccessToken, setOnUnauthorized } from '../api'
 import { isAllowedEmail, toDashboardEmail } from '../../authConfig.js'
 import { AuthContext } from './authReactContext.js'
 import Login from '../pages/Login'
@@ -92,6 +92,15 @@ export function AuthProvider({ children }) {
 
     return () => subscription.unsubscribe()
   }, [syncSession])
+
+  useEffect(() => {
+    setOnUnauthorized(() => {
+      setApiAccessToken(null)
+      setStep('signed_out')
+      supabase?.auth.signOut().catch(() => {})
+    })
+    return () => setOnUnauthorized(null)
+  }, [])
 
   const signIn = useCallback(async (usernameOrEmail, password) => {
     setError(null)

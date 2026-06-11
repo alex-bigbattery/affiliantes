@@ -3,7 +3,11 @@
 const BASE = (import.meta.env.VITE_API_URL || '').replace(/\/+$/, '') + '/api'
 
 let accessToken = null
+let onUnauthorized = null
+
 export function setApiAccessToken(token) { accessToken = token }
+/** AuthProvider registers this so 401 from the API forces sign-out → login screen */
+export function setOnUnauthorized(fn) { onUnauthorized = fn }
 
 function authHeaders(extra = {}) {
   const h = { ...extra }
@@ -29,7 +33,10 @@ async function req(method, path, body, params) {
       : 'Invalid JSON response from API.'
     throw new Error(`${hint} (${res.status} ${path})`)
   }
-  if (!res.ok) throw new Error(data?.error?.message || data?.error || `HTTP ${res.status}`)
+  if (!res.ok) {
+    if (res.status === 401 && onUnauthorized) onUnauthorized()
+    throw new Error(data?.error?.message || data?.error || `HTTP ${res.status}`)
+  }
   return data
 }
 
