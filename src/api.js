@@ -14,7 +14,9 @@ async function req(method, path, body, params) {
   let data
   try { data = text ? JSON.parse(text) : null } catch {
     const hint = text.trimStart().startsWith('<!')
-      ? 'API returned HTML instead of JSON — backend may still be deploying, or VITE_API_URL is misconfigured.'
+      ? (import.meta.env.DEV
+        ? 'API returned HTML — local backend not running? Run `npm run dev` or set VITE_API_URL in .env to the Render API URL.'
+        : 'API returned HTML instead of JSON — hard-refresh the page; if it persists, the backend may still be deploying.')
       : 'Invalid JSON response from API.'
     throw new Error(`${hint} (${res.status} ${path})`)
   }
