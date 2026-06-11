@@ -4,7 +4,17 @@ import { config } from 'dotenv'
 config()
 
 const { Pool } = pg
-export const pool = new Pool({ connectionString: process.env.DATABASE_URL })
+
+// Supabase session pooler allows ~15 clients total (shared with commission project).
+// Keep this low; use the transaction pooler URL (port 6543) on Render if you need more.
+const poolMax = Number.parseInt(process.env.PG_POOL_MAX || '', 10) || 3
+
+export const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  max: poolMax,
+  idleTimeoutMillis: 20_000,
+  connectionTimeoutMillis: 15_000,
+})
 
 export async function initTables() {
   // Mark any stale running syncs as interrupted (server crashed mid-sync)

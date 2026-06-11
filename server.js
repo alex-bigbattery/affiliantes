@@ -1104,16 +1104,22 @@ if (fs.existsSync(distDir)) {
 }
 
 // ── Startup ──────────────────────────────────────────────────────────────────
+async function runScheduledSyncs() {
+  await runSync().catch(console.error)
+  await runWooSync().catch(console.error)
+}
+
 async function start() {
+  // Listen first so Render health checks pass while init/sync run.
+  await new Promise(resolve => app.listen(PORT, resolve))
+  console.log(`\n  ⚡ Affiliate Dashboard API → http://localhost:${PORT}\n`)
+
   await initTables()
-  app.listen(PORT, () => console.log(`\n  ⚡ Affiliate Dashboard API → http://localhost:${PORT}\n`))
+
   console.log('  🔄 Running initial sync...')
-  await Promise.all([runSync(), runWooSync()])
+  await runScheduledSyncs()
   console.log(`  ⏰ Auto-sync every ${SYNC_MS / 60000} minutes`)
-  setInterval(() => {
-    runSync().catch(console.error)
-    runWooSync().catch(console.error)
-  }, SYNC_MS)
+  setInterval(() => { runScheduledSyncs().catch(console.error) }, SYNC_MS)
 }
 
 start().catch(e => { console.error('Fatal startup error:', e); process.exit(1) })
