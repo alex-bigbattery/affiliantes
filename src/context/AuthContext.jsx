@@ -22,17 +22,6 @@ async function resolveAuthStep(session) {
 
   if (mustChangePassword(session.user)) return 'password_change'
 
-  const { data: aal, error: aalErr } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel()
-  if (aalErr) throw aalErr
-
-  const { data: factors, error: fErr } = await supabase.auth.mfa.listFactors()
-  if (fErr) throw fErr
-
-  const verifiedTotp = (factors?.totp || []).filter(f => f.status === 'verified')
-  if (!verifiedTotp.length) return 'mfa_enroll'
-
-  if (aal.nextLevel === 'aal2' && aal.currentLevel !== 'aal2') return 'mfa_verify'
-
   return 'ready'
 }
 

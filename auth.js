@@ -20,22 +20,12 @@ const supabaseAdmin = SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
   ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, supabaseServerOptions)
   : null
 
-function decodeJwtPayload(token) {
-  try {
-    const part = token.split('.')[1]
-    const json = Buffer.from(part.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8')
-    return JSON.parse(json)
-  } catch {
-    return {}
-  }
-}
-
 export function authConfigured() {
   return !!supabaseAuth
 }
 
-/** Verify Supabase JWT, allowlist email, and (by default) require MFA (aal2). */
-export function requireAuth({ allowAal1 = false } = {}) {
+/** Verify Supabase JWT and allowlisted email. */
+export function requireAuth() {
   return async (req, res, next) => {
     if (!supabaseAuth) {
       return res.status(503).json({ error: 'Auth not configured on server (SUPABASE_URL / SUPABASE_ANON_KEY)' })
@@ -56,12 +46,6 @@ export function requireAuth({ allowAal1 = false } = {}) {
       return res.status(403).json({ error: 'Access denied' })
     }
 
-    const claims = decodeJwtPayload(token)
-    const aal = claims.aal || 'aal1'
-    if (!allowAal1 && aal !== 'aal2') {
-      return res.status(401).json({ error: 'MFA verification required' })
-    }
-
     req.authUser = user
     req.accessToken = token
     next()
@@ -69,7 +53,7 @@ export function requireAuth({ allowAal1 = false } = {}) {
 }
 
 export function registerAuthRoutes(app) {
-  app.post('/api/auth/password-setup-complete', requireAuth({ allowAal1: true }), async (req, res) => {
+  app.post('/api/auth/password-setup-complete', requireAuth(), async (req, res) => {
     if (!supabaseAdmin) {
       return res.status(503).json({ error: 'Server admin client not configured (SUPABASE_SERVICE_ROLE_KEY)' })
     }

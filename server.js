@@ -48,7 +48,7 @@ app.use(express.json())
 // Health check (used by Render)
 app.get('/api/health', (_req, res) => res.json({ ok: true, ts: Date.now() }))
 
-// Auth (password setup uses aal1; other routes require MFA aal2 below)
+// Auth routes + JWT protection for /api/*
 registerAuthRoutes(app)
 
 app.use((req, res, next) => {
