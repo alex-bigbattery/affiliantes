@@ -6,10 +6,10 @@ const SUPABASE_URL = process.env.SUPABASE_URL
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_PUBLISHABLE_KEY
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY
 
-/** Node 20 on Render has no native WebSocket — required by @supabase/realtime-js */
+/** Node 20 on Render has no native WebSocket — pass ws as realtime transport */
 const supabaseServerOptions = {
   auth: { persistSession: false, autoRefreshToken: false },
-  global: { WebSocket: ws },
+  realtime: { transport: ws },
 }
 
 const supabaseAuth = SUPABASE_URL && SUPABASE_ANON_KEY
