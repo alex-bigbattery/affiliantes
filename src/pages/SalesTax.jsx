@@ -180,7 +180,7 @@ export default function SalesTax() {
     <div>
       <PageHeader
         title="Sales Tax"
-        subtitle="Estimated US sales tax by shipping address — any payment method"
+        subtitle="BB web orders only · excludes void, cancelled, and refunded"
       />
 
       <div className="px-4 sm:px-6 mb-4">
@@ -219,6 +219,7 @@ export default function SalesTax() {
         <Info size={18} className="mt-0.5 shrink-0 text-blue-500" />
         <span>
           <strong>Estimate only</strong> — not for tax filing or compliance.{' '}
+          Includes paid/processing BB orders from WooCommerce/Zoho; SO bulk invoices and void/refunded orders are excluded.{' '}
           {provider === 'state_avg'
             ? 'State average table — edit a row’s rate % and Save to store a custom value in Supabase.'
             : provider === 'salestaxzip'
