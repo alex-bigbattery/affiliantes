@@ -22,6 +22,11 @@ import { registerZohoPriceHistory } from './zohoPriceHistory.js'
 import { registerTaxEstimate } from './taxEstimate.js'
 import { syncOrderCommissions, orderCommissionsMonthly, queryOrderCommissions, updateCommissionStatus, commissionStatsSummary, mapCommissionRow, findOrderCommissionById } from './orderCommissionsSync.js'
 import {
+  ZOHO_ORDER_STATUS_EXCLUDED,
+  filteredOrderExcluded,
+  excludedStatusSql,
+} from './orderFilters.js'
+import {
   normalizeDateParam,
   toIsoDateOnly,
   orderDateFromClause,
@@ -549,6 +554,8 @@ async function queryWcOnlyOrders(req) {
   if (status) {
     vals.push(status)
     clauses.push(`o.display_status = $${vals.length}`)
+  } else {
+    clauses.push(filteredOrderExcluded('o'))
   }
   if (search) {
     vals.push(`%${search}%`)
@@ -614,6 +621,7 @@ async function queryWcOnlyOrders(req) {
         SELECT 1 FROM sales_orders s
         WHERE UPPER(TRIM(s.salesorder_number)) = wo.order_number_norm
       )
+      AND ${excludedStatusSql('wo.status')}
     `),
   ])
 
@@ -641,6 +649,7 @@ async function wcOnlyCount() {
       SELECT 1 FROM sales_orders s
       WHERE UPPER(TRIM(s.salesorder_number)) = wo.order_number_norm
     )
+    AND ${excludedStatusSql('wo.status')}
   `)
   return row?.n || 0
 }
@@ -661,6 +670,8 @@ app.get('/api/orders', handle(async req => {
   if (status) {
     vals.push(status)
     clauses.push(`o.display_status = $${vals.length}`)
+  } else {
+    clauses.push(filteredOrderExcluded('o'))
   }
   if (search) {
     vals.push(`%${search}%`)
@@ -801,7 +812,9 @@ app.get('/api/orders', handle(async req => {
         SELECT ${ORDER_SEGMENT_EXPR} AS segment,
                (s.salesorder_number ILIKE 'BB%') AS is_bb
         FROM sales_orders s
+        LEFT JOIN wc_orders wo ON wo.order_number_norm = UPPER(TRIM(s.salesorder_number))
         LEFT JOIN coupon_map m ON m.coupon_code = ${COUPON_EXPR}
+        WHERE ${ZOHO_ORDER_STATUS_EXCLUDED}
       )
       SELECT segment, COUNT(*)::int AS n, COUNT(*) FILTER (WHERE is_bb)::int AS bb_n
       FROM enriched

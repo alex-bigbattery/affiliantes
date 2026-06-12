@@ -900,6 +900,7 @@ export default function Orders() {
           <strong> Affiliate Coupon</strong> = linked affiliates only — commission = Net Sales (excl. shipping) × WC discount %.
           <strong> Zoho affiliate coupon</strong> = affiliate-type code on the order but not linked in WooCommerce (no commission).
           SO/BB tabs exclude affiliate-coupon orders.
+          Void, cancelled, and refunded orders are hidden by default (pick that status in the filter to view them).
           <strong> WC only (not in Zoho)</strong> = BB orders in WooCommerce that are not in Zoho yet — does not change Zoho tab counts.
         </span>
       </div>

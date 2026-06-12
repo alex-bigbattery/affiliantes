@@ -13,11 +13,12 @@ import {
 
 export { STATE_RATES, normalizeUsState, round2, num, extractShippingAddress }
 
+import {
+  ZOHO_ORDER_STATUS_EXCLUDED,
+} from './orderFilters.js'
+
 /** Web (WooCommerce) orders only — excludes Zoho SO bulk invoices. */
 const TAX_ORDER_SCOPE = `s.salesorder_number ILIKE 'BB%'`
-
-/** Not collected / reversed — exclude from tax estimates. */
-const TAX_EXCLUDED_STATUSES = ['void', 'cancelled', 'canceled', 'refunded']
 
 const SHIP_STATE_SQL = `
   UPPER(TRIM(COALESCE(
@@ -230,7 +231,7 @@ export function registerTaxEstimate(app, { normalizeDateParam } = {}) {
       const clauses = [
         `s.order_date IS NOT NULL`,
         TAX_ORDER_SCOPE,
-        `LOWER(COALESCE(wo.status, s.status, '')) NOT IN (${TAX_EXCLUDED_STATUSES.map(s => `'${s}'`).join(', ')})`,
+        ZOHO_ORDER_STATUS_EXCLUDED,
       ]
 
       if (status) {
