@@ -17,3 +17,17 @@ export const ZOHO_ORDER_STATUS_EXCLUDED = excludedStatusSql('COALESCE(wo.status,
 export function filteredOrderExcluded(alias = 'o') {
   return excludedStatusSql(`${alias}.display_status`)
 }
+
+export const ORDER_SCOPES = ['bb', 'so', 'all']
+
+export function parseOrderScope(raw, defaultScope = 'bb') {
+  const s = String(raw || defaultScope).toLowerCase()
+  return ORDER_SCOPES.includes(s) ? s : defaultScope
+}
+
+/** sales_orders prefix filter — null for all Zoho orders. */
+export function orderScopeSql(scope, alias = 's') {
+  if (scope === 'bb') return `${alias}.salesorder_number ILIKE 'BB%'`
+  if (scope === 'so') return `${alias}.salesorder_number ILIKE 'SO%'`
+  return null
+}

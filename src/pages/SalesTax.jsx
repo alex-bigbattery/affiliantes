@@ -16,6 +16,18 @@ const PROVIDERS = [
   { id: 'salestaxzip', label: 'SalesTaxZip', hint: 'Free · no API key · shipping ZIP only (not full address)' },
 ]
 
+const ORDER_SCOPES = [
+  { id: 'bb', label: 'BB web', hint: 'WooCommerce store orders (default)' },
+  { id: 'so', label: 'SO B2B', hint: 'Zoho bulk / quote invoices' },
+  { id: 'all', label: 'All Zoho', hint: 'BB + SO — excludes void and refunded' },
+]
+
+const SCOPE_SUBTITLES = {
+  bb: 'BB web orders · excludes void, cancelled, and refunded',
+  so: 'SO B2B invoices · excludes void, cancelled, and refunded',
+  all: 'All Zoho orders (BB + SO) · excludes void, cancelled, and refunded',
+}
+
 function toIsoDate(s) {
   if (!s) return ''
   const t = String(s).trim()
@@ -83,6 +95,7 @@ export default function SalesTax() {
   const setFormField = (k, v) => setForm(f => ({ ...f, [k]: v }))
 
   const [filters, setFilters] = useState({
+    scope: 'bb',
     search: '', ship_state: '', date_from: '', date_to: '', has_state: '',
   })
   const [orders, setOrders] = useState([])
@@ -103,6 +116,7 @@ export default function SalesTax() {
       const data = await api.taxOrders({
         number: 'all',
         provider,
+        scope: filters.scope || 'bb',
         search: filters.search || undefined,
         ship_state: filters.ship_state || undefined,
         date_from: filters.date_from || undefined,
@@ -173,6 +187,7 @@ export default function SalesTax() {
   }
 
   const setFilter = (k, v) => setFilters(f => ({ ...f, [k]: v }))
+  const scope = filters.scope || 'bb'
   const providerInfo = PROVIDERS.find(p => p.id === provider)
   const isConfigured = (id) => providerMeta.find(p => p.id === id)?.configured !== false
 
@@ -180,7 +195,7 @@ export default function SalesTax() {
     <div>
       <PageHeader
         title="Sales Tax"
-        subtitle="BB web orders only · excludes void, cancelled, and refunded"
+        subtitle={SCOPE_SUBTITLES[scope] || SCOPE_SUBTITLES.bb}
       />
 
       <div className="px-4 sm:px-6 mb-4">
@@ -219,7 +234,8 @@ export default function SalesTax() {
         <Info size={18} className="mt-0.5 shrink-0 text-blue-500" />
         <span>
           <strong>Estimate only</strong> — not for tax filing or compliance.{' '}
-          Includes paid/processing BB orders from WooCommerce/Zoho; SO bulk invoices and void/refunded orders are excluded.{' '}
+          Includes paid/processing orders from Zoho/WooCommerce; void/refunded orders are excluded.{' '}
+          Use <strong>BB web</strong> for the store, <strong>SO B2B</strong> for bulk invoices, or <strong>All Zoho</strong> for both.{' '}
           {provider === 'state_avg'
             ? 'State average table — edit a row’s rate % and Save to store a custom value in Supabase.'
             : provider === 'salestaxzip'
@@ -241,6 +257,27 @@ export default function SalesTax() {
 
       {tab === 'orders' && (
         <div className="px-4 sm:px-6 pb-8 space-y-4">
+          <div>
+            <div className="text-xs font-medium text-gray-500 mb-2">Order type</div>
+            <div className="flex flex-wrap gap-2">
+              {ORDER_SCOPES.map(s => (
+                <button
+                  key={s.id}
+                  type="button"
+                  title={s.hint}
+                  className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${
+                    scope === s.id
+                      ? 'bg-navy-700 text-white border-navy-700'
+                      : 'bg-white text-gray-700 border-gray-200 hover:border-gray-300'
+                  }`}
+                  onClick={() => setFilter('scope', s.id)}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
           <div className="card p-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
             <label className="block lg:col-span-2">
               <span className="text-xs text-gray-500">Search order / customer</span>
@@ -281,7 +318,7 @@ export default function SalesTax() {
 
           {summary && (
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-              <StatCard label="Orders" value={summary.orders_count ?? orders.length} />
+              <StatCard label="Orders" value={(summary.orders_count ?? orders.length).toLocaleString()} sub={ORDER_SCOPES.find(s => s.id === scope)?.label} />
               <StatCard label="Subtotal" value={fmt(summary.total_subtotal)} />
               <StatCard label="Est. tax" value={fmt(summary.total_estimated_tax)} color="text-brand-orange" />
               <StatCard label="Total w/ tax" value={fmt(summary.total_with_tax)} color="text-green-700" />

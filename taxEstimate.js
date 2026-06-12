@@ -15,10 +15,9 @@ export { STATE_RATES, normalizeUsState, round2, num, extractShippingAddress }
 
 import {
   ZOHO_ORDER_STATUS_EXCLUDED,
+  parseOrderScope,
+  orderScopeSql,
 } from './orderFilters.js'
-
-/** Web (WooCommerce) orders only — excludes Zoho SO bulk invoices. */
-const TAX_ORDER_SCOPE = `s.salesorder_number ILIKE 'BB%'`
 
 const SHIP_STATE_SQL = `
   UPPER(TRIM(COALESCE(
@@ -220,9 +219,11 @@ export function registerTaxEstimate(app, { normalizeDateParam } = {}) {
         number: numberRaw = 'all', offset: offsetRaw = 0, search, status, ship_state,
         date_from, date_to, has_state, order = 'DESC',
         provider: providerRaw = 'state_avg',
+        scope: scopeRaw,
       } = req.query
 
       const provider = parseProvider(providerRaw)
+      const scope = parseOrderScope(scopeRaw)
       const fetchAll = numberRaw === 'all' || numberRaw === '0' || Number(numberRaw) === 0
       const offset = fetchAll ? 0 : Math.max(0, Number(offsetRaw) || 0)
       const number = fetchAll ? null : Math.min(Math.max(1, Number(numberRaw) || 50), 5000)
@@ -230,9 +231,10 @@ export function registerTaxEstimate(app, { normalizeDateParam } = {}) {
       const vals = []
       const clauses = [
         `s.order_date IS NOT NULL`,
-        TAX_ORDER_SCOPE,
         ZOHO_ORDER_STATUS_EXCLUDED,
       ]
+      const scopeClause = orderScopeSql(scope)
+      if (scopeClause) clauses.push(scopeClause)
 
       if (status) {
         vals.push(status)
@@ -334,6 +336,7 @@ export function registerTaxEstimate(app, { normalizeDateParam } = {}) {
       res.json({
         items,
         total: countRow.total,
+        scope,
         provider,
         provider_label: PROVIDER_LABELS[provider],
         summary: {
