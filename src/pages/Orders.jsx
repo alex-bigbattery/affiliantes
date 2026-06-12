@@ -12,7 +12,7 @@ const WC_ADMIN_ORDER = 'https://bigbattery.com/wp-admin/admin.php?page=wc-orders
 
 const SEGMENTS = {
   so:               { label: 'SO orders',              short: 'Zoho B2B / quote orders (SO- prefix), no affiliate coupon' },
-  bb:               { label: 'BB orders',              short: 'WooCommerce web orders (BB prefix), no affiliate coupon' },
+  bb:               { label: 'BB orders',              short: 'WooCommerce web orders (BB prefix) — includes affiliate-coupon orders' },
   wc_affiliate:     { label: 'Affiliate Coupon',       short: 'Affiliate coupon linked in WooCommerce → AffiliateWP (commission applies)' },
   zoho_affiliate:   { label: 'Zoho affiliate coupon',  short: 'Affiliate-type coupon on Zoho orders, not linked in WooCommerce' },
   affiliate_coupon: { label: 'All affiliate coupons',  short: 'WC-linked first, then Zoho-only affiliate coupons' },
@@ -691,7 +691,7 @@ export default function Orders() {
 
   const tabs = [
     { key: 'so',               n: s?.so },
-    { key: 'bb',               n: s?.bb },
+    { key: 'bb',               n: s?.bb_all ?? s?.bb },
     { key: 'wc_affiliate',     n: s?.wc_affiliate },
     { key: 'zoho_affiliate',   n: s?.zoho_affiliate, hide: !s?.zoho_affiliate },
     { key: 'affiliate_coupon', n: s?.affiliate_coupon },
@@ -731,7 +731,7 @@ export default function Orders() {
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3 px-6 mb-4">
             <SegmentCard label="SO orders" value={s.so?.toLocaleString()} sub="B2B / quote"
               color="text-slate-700" active={tab === 'so'} onClick={() => setTab('so')} />
-            <SegmentCard label="BB orders" value={s.bb?.toLocaleString()} sub="Web store"
+            <SegmentCard label="BB orders" value={(s.bb_all ?? s.bb)?.toLocaleString()} sub="Web store (all)"
               color="text-blue-600" active={tab === 'bb'} onClick={() => setTab('bb')} />
             <SegmentCard label="Affiliate Coupon" value={s.wc_affiliate?.toLocaleString()}
               sub="WC + AffiliateWP linked" color="text-green-600"
