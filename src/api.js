@@ -73,7 +73,8 @@ export const api = {
   // Referrals (order_commissions ledger — returns { items, total })
   referrals:       (p)    => get('/referrals', p),
   referral:        (id)   => get(`/referrals/${id}`),
-  updateReferral:  (id, d) => put(`/referrals/${id}`, d),
+  updateReferral:  (id, d) => put(`/referrals/${encodeURIComponent(id)}`, d),
+  updateCommissionStatus: (so, status) => put(`/commissions/${encodeURIComponent(so)}/status`, { status }),
   deleteReferral:  (id)   => del(`/referrals/${id}`),
   bulkReferrals:   (ids, status) => post('/referrals/bulk', { ids, status }),
 

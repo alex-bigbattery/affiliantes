@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useCallback } from 'react'
+﻿import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { api, fmt, fmtDate } from '../api'
 import { PageHeader, Spinner, ErrorMsg, StatusBadge, Empty } from '../components/Layout'
@@ -7,6 +7,23 @@ import ExportButtons from '../components/ExportButtons'
 
 const STATUSES = ['all', 'open', 'estimated', 'unpaid', 'paid', 'pending', 'rejected']
 const PAGE_SIZE = 50
+
+/** YYYY-MM → first/last calendar day of that month. */
+function monthBounds(ym) {
+  if (!/^\d{4}-\d{2}$/.test(ym)) return null
+  const [y, m] = ym.split('-').map(Number)
+  const from = `${ym}-01`
+  const lastDay = new Date(y, m, 0).getDate()
+  const to = `${ym}-${String(lastDay).padStart(2, '0')}`
+  return { from, to }
+}
+
+function inferMonthFromRange(from, to) {
+  if (!from || !to || !/^\d{4}-\d{2}-\d{2}$/.test(from) || !from.endsWith('-01')) return ''
+  const ym = from.slice(0, 7)
+  const bounds = monthBounds(ym)
+  return bounds?.from === from && bounds?.to === to ? ym : ''
+}
 
 function rowKey(r) {
   return r.salesorder_number || String(r.referral_id)
@@ -27,6 +44,11 @@ export default function Referrals() {
   const affId = searchParams.get('affiliate') || ''
   const dateFrom = searchParams.get('from') || ''
   const dateTo = searchParams.get('to') || ''
+  const monthParam = searchParams.get('month') || ''
+  const monthFilter = useMemo(() => {
+    if (/^\d{4}-\d{2}$/.test(monthParam)) return monthParam
+    return inferMonthFromRange(dateFrom, dateTo)
+  }, [monthParam, dateFrom, dateTo])
 
   const set = (k, v) => {
     const p = new URLSearchParams(searchParams)
@@ -36,9 +58,48 @@ export default function Referrals() {
     setSelected(new Set())
   }
 
+  const setMonthFilter = (ym) => {
+    const p = new URLSearchParams(searchParams)
+    if (ym) {
+      const bounds = monthBounds(ym)
+      if (!bounds) return
+      p.set('month', ym)
+      p.set('from', bounds.from)
+      p.set('to', bounds.to)
+    } else {
+      p.delete('month')
+      p.delete('from')
+      p.delete('to')
+    }
+    setSearchParams(p)
+    setOffset(0)
+    setSelected(new Set())
+  }
+
+  const setDateFrom = (v) => {
+    const p = new URLSearchParams(searchParams)
+    v ? p.set('from', v) : p.delete('from')
+    p.delete('month')
+    setSearchParams(p)
+    setOffset(0)
+    setSelected(new Set())
+  }
+
+  const setDateTo = (v) => {
+    const p = new URLSearchParams(searchParams)
+    v ? p.set('to', v) : p.delete('to')
+    p.delete('month')
+    setSearchParams(p)
+    setOffset(0)
+    setSelected(new Set())
+  }
+
   const load = useCallback(() => {
     setLoading(true)
     setError(null)
+    const bounds = monthFilter ? monthBounds(monthFilter) : null
+    const from = bounds?.from || dateFrom
+    const to = bounds?.to || dateTo
     const params = {
       number: PAGE_SIZE,
       offset,
@@ -47,8 +108,8 @@ export default function Referrals() {
     }
     if (status && status !== 'all') params.status = status
     if (affId) params.affiliate_id = affId
-    if (dateFrom) params.date = dateFrom
-    if (dateTo) params.end_date = dateTo
+    if (from) params.date = from
+    if (to) params.end_date = to
 
     api.referrals(params)
       .then(d => {
@@ -58,7 +119,7 @@ export default function Referrals() {
       })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false))
-  }, [status, affId, dateFrom, dateTo, offset])
+  }, [status, affId, dateFrom, dateTo, monthFilter, offset])
 
   useEffect(() => { load() }, [load])
   useEffect(() => {
@@ -91,9 +152,13 @@ export default function Referrals() {
 
   const updateOne = async (r, newStatus) => {
     try {
-      const id = rowKey(r)
-      await api.updateReferral(id, { status: newStatus })
-      setReferrals(prev => prev.map(x => rowKey(x) === id ? { ...x, status: newStatus } : x))
+      const id = r.salesorder_number || String(r.referral_id)
+      if (r.salesorder_number && !r.awp_referral_id) {
+        await api.updateCommissionStatus(r.salesorder_number, newStatus)
+      } else {
+        await api.updateReferral(id, { status: newStatus })
+      }
+      setReferrals(prev => prev.map(x => rowKey(x) === rowKey(r) ? { ...x, status: newStatus } : x))
     } catch (e) { alert(e.message) }
   }
 
@@ -161,16 +226,20 @@ export default function Referrals() {
             </option>
           ))}
         </select>
+        <input type="month" className="input w-40" value={monthFilter}
+          onChange={e => setMonthFilter(e.target.value)} title="Filter by month" />
         <div className="flex items-center gap-2">
-          <input type="date" className="input w-40" value={dateFrom} onChange={e => set('from', e.target.value)} />
+          <input type="date" className="input w-40" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
           <span className="text-gray-400 text-sm">to</span>
-          <input type="date" className="input w-40" value={dateTo} onChange={e => set('to', e.target.value)} />
+          <input type="date" className="input w-40" value={dateTo} onChange={e => setDateTo(e.target.value)} />
         </div>
-        {(affId || dateFrom || dateTo) && (
+        {(affId || dateFrom || dateTo || monthFilter) && (
           <button className="btn-ghost text-xs" onClick={() => {
             const p = new URLSearchParams(searchParams)
-            p.delete('affiliate'); p.delete('from'); p.delete('to')
+            p.delete('affiliate'); p.delete('from'); p.delete('to'); p.delete('month')
             setSearchParams(p)
+            setOffset(0)
+            setSelected(new Set())
           }}>
             Clear filters ×
           </button>

@@ -20,7 +20,7 @@ import { refreshWcOrder, refreshWcOrdersBulk, wooConfigured as wooUpdateConfigur
 import { runCouponMapSync } from './couponMapSync.js'
 import { registerZohoPriceHistory } from './zohoPriceHistory.js'
 import { registerTaxEstimate } from './taxEstimate.js'
-import { syncOrderCommissions, orderCommissionsMonthly, queryOrderCommissions, updateCommissionStatus, commissionStatsSummary, mapCommissionRow } from './orderCommissionsSync.js'
+import { syncOrderCommissions, orderCommissionsMonthly, queryOrderCommissions, updateCommissionStatus, commissionStatsSummary, mapCommissionRow, findOrderCommissionById } from './orderCommissionsSync.js'
 import {
   normalizeDateParam,
   toIsoDateOnly,
@@ -271,13 +271,25 @@ app.get('/api/referrals/:id', handle(async req => {
 }))
 
 app.put('/api/referrals/:id', handle(async req => {
-  const id = req.params.id
-  const bySo = await pool.query(`SELECT * FROM order_commissions WHERE salesorder_number = $1`, [id])
-  if (bySo.rows.length && !bySo.rows[0].awp_referral_id) {
-    const status = req.body?.status
-    if (status) return updateCommissionStatus(id, status)
+  const status = req.body?.status
+  if (!status) {
+    const err = new Error('status required')
+    err.status = 400
+    throw err
   }
-  const numId = parseInt(id, 10)
+  const row = await findOrderCommissionById(req.params.id)
+  if (row) {
+    if (row.awp_referral_id) {
+      const result = await awpUpdateReferral(row.awp_referral_id, req.body)
+      await syncReferralRow(pool, result)
+      await syncOrderCommissions()
+      const fresh = await findOrderCommissionById(row.salesorder_number)
+      if (fresh) return mapCommissionRow(fresh)
+      return result
+    }
+    return updateCommissionStatus(row.salesorder_number, status)
+  }
+  const numId = parseInt(req.params.id, 10)
   if (!Number.isFinite(numId)) {
     const err = new Error('Invalid referral id')
     err.status = 400

@@ -168,6 +168,24 @@ export async function orderCommissionsMonthly(months = 12) {
   return map
 }
 
+export async function findOrderCommissionById(id) {
+  const key = String(id || '').trim()
+  if (!key) return null
+  let { rows } = await pool.query(`SELECT * FROM order_commissions WHERE salesorder_number = $1`, [key])
+  if (rows.length) return rows[0]
+  if (/^BB/i.test(key)) {
+    const bare = key.replace(/^BB/i, '')
+    ;({ rows } = await pool.query(`SELECT * FROM order_commissions WHERE salesorder_number = $1`, [bare]))
+    if (rows.length) return rows[0]
+  } else if (/^\d+$/.test(key)) {
+    ;({ rows } = await pool.query(`SELECT * FROM order_commissions WHERE salesorder_number = $1`, [`BB${key}`]))
+    if (rows.length) return rows[0]
+    ;({ rows } = await pool.query(`SELECT * FROM order_commissions WHERE awp_referral_id = $1`, [parseInt(key, 10)]))
+    if (rows.length) return rows[0]
+  }
+  return null
+}
+
 export async function queryOrderCommissions({
   number = 50, offset = 0, status, affiliate_id, date, end_date, reference, orderby = 'date', order = 'DESC',
 }) {
