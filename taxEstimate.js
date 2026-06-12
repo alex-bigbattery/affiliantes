@@ -1,7 +1,7 @@
 // Sales Tax Estimator — multi-provider + Supabase overrides
 
 import { pool } from './db.js'
-import { toIsoDateOnly, orderDateFromClause, orderDateToClause } from './dateUtils.js'
+import { resolveSalesOrderDate, effectiveOrderDateExpr, effectiveOrderDateFromClause, effectiveOrderDateToClause } from './dateUtils.js'
 import {
   STATE_RATES, normalizeUsState, round2, num,
   extractShippingAddress,
@@ -72,7 +72,7 @@ async function mapOrderTax(row, { provider, overrides, cache, useOverrides }) {
   return {
     salesorder_id: row.salesorder_id,
     salesorder_number: row.salesorder_number,
-    order_date: toIsoDateOnly(row.order_date),
+    order_date: row.effective_order_date || resolveSalesOrderDate(row.order_date, row.raw_json, row.wc_date_created),
     customer_name: row.customer_name,
     status: row.status,
     sub_total: round2(subtotal),
@@ -246,14 +246,15 @@ export function registerTaxEstimate(app, { normalizeDateParam } = {}) {
       const fromDate = normalizeDateParam?.(date_from)
       if (fromDate) {
         vals.push(fromDate)
-        clauses.push(orderDateFromClause('s', `$${vals.length}`))
+        clauses.push(effectiveOrderDateFromClause('s', 'wo', `$${vals.length}`))
       }
       const toDate = normalizeDateParam?.(date_to)
       if (toDate) {
         vals.push(toDate)
-        clauses.push(orderDateToClause('s', `$${vals.length}`))
+        clauses.push(effectiveOrderDateToClause('s', 'wo', `$${vals.length}`))
       }
 
+      const effectiveDate = effectiveOrderDateExpr('s', 'wo')
       const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''
       const sortDir = String(order).toUpperCase() === 'ASC' ? 'ASC' : 'DESC'
       const limitClause = fetchAll ? '' : `LIMIT $${vals.length + 1} OFFSET $${vals.length + 2}`
@@ -272,11 +273,13 @@ export function registerTaxEstimate(app, { normalizeDateParam } = {}) {
             COALESCE(wo.status, s.status) AS status,
             s.raw_json,
             wo.raw AS wc_raw,
+            wo.date_created AS wc_date_created,
+            ${effectiveDate} AS effective_order_date,
             ${SHIP_STATE_SQL} AS ship_state_raw
           FROM sales_orders s
           LEFT JOIN wc_orders wo ON wo.order_number_norm = UPPER(TRIM(s.salesorder_number))
           ${where}
-          ORDER BY s.order_date ${sortDir} NULLS LAST, s.salesorder_number ${sortDir}
+          ORDER BY ${effectiveDate} ${sortDir} NULLS LAST, s.salesorder_number ${sortDir}
           ${limitClause}
         `, pageVals),
         pool.query(`
