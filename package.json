@@ -10,6 +10,8 @@
     "start": "NODE_ENV=production node server.js",
     "sync:woo": "node scripts/sync-woo-coupons.js",
     "configure:render-woo": "node scripts/configure-render-woo-env.js",
+    "configure:render-affwp": "node scripts/configure-render-affwp-env.js",
+    "install:wp-bridge": "node scripts/install-wordpress-bridge.js",
     "probe:affwp-pay": "node scripts/probe-affwp-referral-update.js",
     "sync:coupon-map": "node scripts/sync-coupon-map.js",
     "sync:wc-orders": "node scripts/sync-wc-orders.js",

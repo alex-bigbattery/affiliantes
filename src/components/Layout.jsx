@@ -2,7 +2,7 @@ import { NavLink } from 'react-router-dom'
 import { useEffect, useState } from 'react'
 import {
   LayoutDashboard, Users, ArrowLeftRight, DollarSign,
-  Eye, Tag, Image, RefreshCw, Zap, Database, Menu, X, ShoppingCart, LineChart, LogOut
+  Eye, Tag, Image, RefreshCw, Zap, Database, Menu, X, ShoppingCart, LineChart, LogOut, Calculator
 } from 'lucide-react'
 import { api } from '../api'
 import { useAuth } from '../context/AuthContext.jsx'
@@ -18,6 +18,7 @@ const links = [
   { to: '/zoho-price-history', label: 'Price History', icon: LineChart },
   { to: '/creatives',   label: 'Creatives',    icon: Image },
   { to: '/sync',        label: 'Sync DB',      icon: Database },
+  { to: '/sales-tax',   label: 'Sales Tax',    icon: Calculator },
 ]
 
 function SyncFooter() {
@@ -104,7 +105,7 @@ export default function Layout({ children }) {
 
         {/* Nav */}
         <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
-          {links.map(({ to, label, icon: Icon }) => (
+          {links.filter(l => !l.only || (user?.email || '').toLowerCase() === l.only).map(({ to, label, icon: Icon }) => (
             <NavLink
               key={to}
               to={to}

@@ -1,5 +1,9 @@
 import { useContext, useEffect, useState, useCallback, useMemo } from 'react'
-import { supabase } from '../lib/supabase'
+import { getSupabase, reconfigureSupabase } from '../lib/supabase'
+import {
+  setRememberMe,
+  setRememberedUsername,
+} from '../lib/authPreferences.js'
 import { api, setApiAccessToken, setOnUnauthorized } from '../api'
 import { isAllowedEmail, toDashboardEmail } from '../../authConfig.js'
 import { AuthContext } from './authReactContext.js'
@@ -16,7 +20,7 @@ async function resolveAuthStep(session) {
 
   const email = session.user.email?.toLowerCase()
   if (!isAllowedEmail(email)) {
-    await supabase.auth.signOut()
+    await getSupabase()?.auth.signOut()
     throw new Error('This account is not authorized for the dashboard.')
   }
 
@@ -41,7 +45,8 @@ export function AuthProvider({ children }) {
 
   const syncSession = useCallback(async (sess) => {
     setError(null)
-    if (!supabase) {
+    const client = getSupabase()
+    if (!client) {
       setError('Auth is not configured (VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY).')
       setStep('signed_out')
       return
@@ -67,15 +72,16 @@ export function AuthProvider({ children }) {
   }, [])
 
   useEffect(() => {
-    if (!supabase) {
+    const client = getSupabase()
+    if (!client) {
       setError('Auth is not configured (VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY).')
       setStep('signed_out')
       return
     }
 
-    supabase.auth.getSession().then(({ data: { session: s } }) => syncSession(s))
+    client.auth.getSession().then(({ data: { session: s } }) => syncSession(s))
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, s) => {
+    const { data: { subscription } } = client.auth.onAuthStateChange((_event, s) => {
       syncSession(s)
     })
 
@@ -86,15 +92,23 @@ export function AuthProvider({ children }) {
     setOnUnauthorized(() => {
       setApiAccessToken(null)
       setStep('signed_out')
-      supabase?.auth.signOut().catch(() => {})
+      getSupabase()?.auth.signOut().catch(() => {})
     })
     return () => setOnUnauthorized(null)
   }, [])
 
-  const signIn = useCallback(async (usernameOrEmail, password) => {
+  const signIn = useCallback(async (usernameOrEmail, password, rememberMe = true) => {
     setError(null)
-    if (!supabase) {
+    const client = reconfigureSupabase(rememberMe)
+    if (!client) {
       throw new Error('Auth is not configured (VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY).')
+    }
+
+    setRememberMe(rememberMe)
+    if (rememberMe) {
+      let u = usernameOrEmail.trim().toLowerCase()
+      if (u.includes('@')) u = u.split('@')[0]
+      setRememberedUsername(u)
     }
 
     const email = toDashboardEmail(usernameOrEmail)
@@ -102,19 +116,23 @@ export function AuthProvider({ children }) {
       throw new Error('This account is not authorized for the dashboard.')
     }
 
-    const { data, error: err } = await supabase.auth.signInWithPassword({ email, password })
+    const { data, error: err } = await client.auth.signInWithPassword({ email, password })
     if (err) throw new Error(mapSignInError(err))
     await syncSession(data.session)
   }, [syncSession])
 
   const signOut = useCallback(async () => {
-    if (supabase) await supabase.auth.signOut()
+    const client = getSupabase()
+    if (client) await client.auth.signOut()
     setApiAccessToken(null)
     setStep('signed_out')
   }, [])
 
   const completePasswordChange = useCallback(async (newPassword) => {
-    const { error: updErr } = await supabase.auth.updateUser({
+    const client = getSupabase()
+    if (!client) throw new Error('Auth is not configured')
+
+    const { error: updErr } = await client.auth.updateUser({
       password: newPassword,
       data: { password_changed: true },
     })
@@ -127,20 +145,22 @@ export function AuthProvider({ children }) {
       /* API route may be missing on Render until auth is deployed */
     }
 
-    await supabase.auth.refreshSession()
-    const { data: { session: refreshed } } = await supabase.auth.getSession()
+    await client.auth.refreshSession()
+    const { data: { session: refreshed } } = await client.auth.getSession()
     await syncSession(refreshed)
   }, [syncSession])
 
   const refreshStep = useCallback(async () => {
-    const { data: { session: s } } = await supabase.auth.getSession()
+    const client = getSupabase()
+    if (!client) return
+    const { data: { session: s } } = await client.auth.getSession()
     await syncSession(s)
   }, [syncSession])
 
   const value = useMemo(() => ({
     step, session, user, error, setError,
     signIn, signOut, completePasswordChange, refreshStep,
-    supabase,
+    supabase: getSupabase(),
   }), [step, session, user, error, signIn, signOut, completePasswordChange, refreshStep])
 
   let content = children

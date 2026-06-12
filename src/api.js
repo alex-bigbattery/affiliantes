@@ -35,6 +35,13 @@ async function req(method, path, body, params) {
   }
   if (!res.ok) {
     if (res.status === 401 && onUnauthorized) onUnauthorized()
+    if (res.status === 404) {
+      throw new Error(
+        import.meta.env.DEV
+          ? `Endpoint not found (${path}). Restart \`npm run dev\` so the local API on :3001 loads the latest routes.`
+          : `Endpoint not found (${path}). The Render API may not be deployed yet — push affiliate-dashboard and wait for deploy, or run locally with \`npm run dev\`.`,
+      )
+    }
     throw new Error(data?.error?.message || data?.error || `HTTP ${res.status}`)
   }
   return data
@@ -121,6 +128,11 @@ export const api = {
   zohoSnapshots: (p) => get('/zoho-price-history/snapshots', p),
   zohoRuns:      (p) => get('/zoho-price-history/runs', p),
   zohoExportUrl: (kind, p) => apiUrl(`/zoho-price-history/${kind}/export`, p),
+
+  // Sales Tax estimator
+  taxStates:   () => get('/tax/states'),
+  taxEstimate: (d) => post('/tax/estimate', d),
+  taxOrders:   (p) => get('/tax/orders', p),
 
   completePasswordSetup: () => post('/auth/password-setup-complete'),
 }

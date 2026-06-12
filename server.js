@@ -19,6 +19,7 @@ import { enrichOrderLineItems, enrichWcLineItems } from './orderLineItems.js'
 import { refreshWcOrder, refreshWcOrdersBulk, wooConfigured as wooUpdateConfigured } from './wooOrderUpdate.js'
 import { runCouponMapSync } from './couponMapSync.js'
 import { registerZohoPriceHistory } from './zohoPriceHistory.js'
+import { registerTaxEstimate } from './taxEstimate.js'
 import { authConfigured, requireAuth, registerAuthRoutes } from './auth.js'
 import { awpRequest, awpUpdateReferral, awpDeleteReferral, syncReferralRow, awpConfigured } from './affwpClient.js'
 
@@ -70,14 +71,12 @@ app.use((req, res, next) => {
 // Zoho Price History — read-only consumption of external capture tables (additive)
 registerZohoPriceHistory(app)
 
-// ── AffiliateWP write helper (still calls API for mutations) ─────────────────
-async function awp(method, endpoint, params = {}, data = null) {
-  const res = await axios({ method, url: `${BASE}${endpoint}`,
-    headers: { Authorization: `Basic ${AUTH}`, 'Content-Type': 'application/json' },
-    params, data, timeout: 30000,
-  })
-  return res.data
-}
+// Sales Tax estimator (additive)
+registerTaxEstimate(app, { normalizeDateParam })
+
+// (Removed duplicate legacy axios-based `awp` — the awpRequest wrapper above is
+//  the single definition. The old one referenced an undefined AUTH and caused a
+//  duplicate-declaration SyntaxError that prevented the server from booting.)
 
 /** Accept ISO (YYYY-MM-DD) or US (M/D/YYYY, MM/DD/YYYY) for order_date filters. */
 function normalizeDateParam(raw) {

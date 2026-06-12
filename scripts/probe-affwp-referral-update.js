@@ -5,7 +5,7 @@
 import { config } from 'dotenv'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
-import { awpConfigured, awpUpdateReferral, awpRequest } from '../affwpClient.js'
+import { awpConfigured, awpUpdateReferral, awpRequest, probeAffwpWriteSupport } from '../affwpClient.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 config({ path: join(__dirname, '..', '.env') })
@@ -18,14 +18,29 @@ if (!awpConfigured()) {
   process.exit(1)
 }
 
-console.log('GET referral', referralId, '…')
-try {
-  const before = await awpRequest('GET', `/referrals/${referralId}`)
-  console.log('Before:', before.status, before.amount)
-} catch (e) {
-  console.warn('GET failed:', e.message)
+const support = await probeAffwpWriteSupport(referralId)
+console.log('Write support:', support)
+if (!support.extended_api && !support.bridge_plugin) {
+  console.error('\nNo write path available.')
+  console.error('Install wordpress/bb-affiliate-dashboard-bridge.php on bigbattery.com')
+  console.error('OR install AffiliateWP REST API Extended addon.\n')
 }
 
-console.log(`PATCH/POST status=${status} …`)
-const after = await awpUpdateReferral(referralId, { status })
-console.log('After:', after.status, after.referral_id || after.id)
+console.log('GET referral', referralId, '…')
+let before
+try {
+  before = await awpRequest('GET', `/referrals/${referralId}`)
+  console.log('Before:', before.status, before.amount)
+} catch (e) {
+  console.error('GET failed:', e.message)
+  process.exit(1)
+}
+
+console.log(`Update status=${status} …`)
+try {
+  const after = await awpUpdateReferral(referralId, { status })
+  console.log('After:', after.status, after.referral_id || after.id)
+} catch (e) {
+  console.error('Update failed:', e.message)
+  process.exit(1)
+}

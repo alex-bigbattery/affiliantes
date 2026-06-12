@@ -4,13 +4,18 @@ import { useAuth } from '../context/AuthContext.jsx'
 import ChangePasswordModal from '../components/ChangePasswordModal'
 import { Spinner } from '../components/Layout'
 import {
+  getRememberMe,
+  getRememberedUsername,
+} from '../lib/authPreferences.js'
+import {
   AuthShell, AuthField, UsernameField, AuthError, AuthSubmit,
 } from '../components/AuthShell'
 
 export default function Login() {
   const { step, signIn, completePasswordChange, error, setError } = useAuth()
-  const [username, setUsername] = useState('')
+  const [username, setUsername] = useState(() => getRememberedUsername())
   const [password, setPassword] = useState('')
+  const [rememberMe, setRememberMeChecked] = useState(() => getRememberMe())
   const [loading, setLoading] = useState(false)
 
   if (step === 'loading') {
@@ -30,7 +35,7 @@ export default function Login() {
     setError(null)
     setLoading(true)
     try {
-      await signIn(username, password)
+      await signIn(username, password, rememberMe)
     } catch (err) {
       setError(err.message || 'Sign in failed')
     } finally {
@@ -62,10 +67,22 @@ export default function Login() {
           type="password"
           value={password}
           onChange={e => setPassword(e.target.value)}
-          autoComplete="current-password"
+          autoComplete={rememberMe ? 'current-password' : 'password'}
           placeholder="••••••••"
           required
         />
+        <label className="flex items-start gap-2.5 cursor-pointer select-none text-sm text-gray-600">
+          <input
+            type="checkbox"
+            className="mt-0.5 rounded border-gray-300 text-navy-700 focus:ring-navy-700/30"
+            checked={rememberMe}
+            onChange={e => setRememberMeChecked(e.target.checked)}
+          />
+          <span>
+            Recordar usuario
+            <span className="text-gray-400"> — mantener la sesión activa en este equipo</span>
+          </span>
+        </label>
         <AuthError>{error}</AuthError>
         <AuthSubmit loading={loading} loadingText="Signing in…">
           Sign in
