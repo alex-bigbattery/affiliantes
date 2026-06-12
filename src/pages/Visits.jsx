@@ -20,12 +20,12 @@ export default function Visits() {
   const [affiliates, setAffiliates] = useState([])
 
   useEffect(() => {
-    api.affiliates({ number: 100 }).then(d => setAffiliates(Array.isArray(d) ? d : []))
+    api.affiliates({ number: 500 }).then(d => setAffiliates(Array.isArray(d) ? d : []))
   }, [])
 
   useEffect(() => {
     setLoading(true)
-    const p = { number: 100 }
+    const p = { number: 'all' }
     if (filters.affiliate_id) p.affiliate_id = filters.affiliate_id
     if (filters.date)         p.date         = filters.date
     if (filters.end_date)     p.end_date     = filters.end_date

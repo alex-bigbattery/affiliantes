@@ -13,7 +13,7 @@ const PROVIDERS = [
   { id: 'state_avg', label: 'State average', hint: 'Free · editable · saved in Supabase' },
   { id: 'ziptax', label: 'Ziptax', hint: 'Address-level · API key on server' },
   { id: 'taxlocus', label: 'TaxLocus', hint: 'Address + breakdown · API key' },
-  { id: 'salestaxzip', label: 'SalesTaxZip', hint: 'ZIP-level · free, no key' },
+  { id: 'salestaxzip', label: 'SalesTaxZip', hint: 'Free · no API key · shipping ZIP only (not full address)' },
 ]
 
 function toIsoDate(s) {
@@ -22,7 +22,9 @@ function toIsoDate(s) {
   if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t
   const us = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
   if (us) return `${us[3]}-${us[1].padStart(2, '0')}-${us[2].padStart(2, '0')}`
-  return t
+  const isoPrefix = t.match(/^(\d{4}-\d{2}-\d{2})/)
+  if (isoPrefix) return isoPrefix[1]
+  return ''
 }
 
 function RateEditor({ order, onSave, onClear, saving }) {
@@ -216,12 +218,14 @@ export default function SalesTax() {
       <div className="mx-4 sm:mx-6 mb-4 flex items-start gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
         <Info size={18} className="mt-0.5 shrink-0 text-blue-500" />
         <span>
-          <strong>Estimate only.</strong>{' '}
+          <strong>Estimate only</strong> — not for tax filing or compliance.{' '}
           {provider === 'state_avg'
-            ? 'State average table — click Save on a row to store a custom rate in Supabase.'
+            ? 'State average table — edit a row’s rate % and Save to store a custom value in Supabase.'
             : provider === 'salestaxzip'
-              ? 'SalesTaxZip uses ZIP code only (free, no API key).'
-              : `${providerInfo?.label} uses live API lookups (cached per address in this request).`}
+              ? 'SalesTaxZip is free and needs no API key. It looks up the combined rate for the order’s shipping ZIP (5 digits). It does not use street address, so it is less precise than Ziptax or TaxLocus but usually better than the state-average tab.'
+            : provider === 'ziptax'
+              ? 'Ziptax uses the full shipping address (requires ZIPTAX_API_KEY on Render).'
+              : 'TaxLocus uses the full shipping address and returns a jurisdiction breakdown (requires TAXLOCUS_API_KEY on Render).'}
         </span>
       </div>
 
@@ -302,13 +306,12 @@ export default function SalesTax() {
                       <th className="text-right">Rate</th>
                       <th className="text-right">Est. tax</th>
                       <th className="text-right">Total w/ tax</th>
-                      <th>Source</th>
                       <th>Status</th>
                     </tr>
                   </thead>
                   <tbody>
                     {orders.length === 0 ? (
-                      <tr><td colSpan={11} className="text-center text-gray-400 py-8">No orders match filters</td></tr>
+                      <tr><td colSpan={10} className="text-center text-gray-400 py-8">No orders match filters</td></tr>
                     ) : orders.map(o => (
                       <tr key={o.salesorder_id || o.salesorder_number} className={o.has_override ? 'bg-amber-50/40' : ''}>
                         <td className="font-medium whitespace-nowrap">{o.salesorder_number}</td>
@@ -345,9 +348,6 @@ export default function SalesTax() {
                         </td>
                         <td className="text-right font-medium">
                           {o.tax ? fmt(o.tax.total_with_tax) : fmt(o.sub_total + o.shipping_charge)}
-                        </td>
-                        <td className="text-[10px] text-gray-400 max-w-[80px] truncate" title={o.tax?.note || o.tax?.source}>
-                          {o.tax?.override ? 'saved' : o.tax?.source || '—'}
                         </td>
                         <td className="text-xs text-gray-500">{o.status || '—'}</td>
                       </tr>

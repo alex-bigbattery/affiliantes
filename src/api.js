@@ -70,7 +70,7 @@ export const api = {
   updateAffiliate:  (id, d) => put(`/affiliates/${id}`, d),
   deleteAffiliate:  (id) => del(`/affiliates/${id}`),
 
-  // Referrals
+  // Referrals (order_commissions ledger — returns { items, total })
   referrals:       (p)    => get('/referrals', p),
   referral:        (id)   => get(`/referrals/${id}`),
   updateReferral:  (id, d) => put(`/referrals/${id}`, d),
@@ -118,6 +118,7 @@ export const api = {
   runSync:    () => post('/sync/run'),
   runWooSync: () => post('/sync/woo/run'),
   runCouponMapSync: () => post('/sync/coupon-map/run'),
+  syncOrderCommissions: () => post('/commissions/from-orders/sync'),
 
   // WooCommerce catalog (Supabase)
   wooCoupons: (p) => get('/woocommerce/coupons', p),

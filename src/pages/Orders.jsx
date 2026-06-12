@@ -10,6 +10,16 @@ const PAGE_SIZE = 50
 const DEFAULT_TAB = 'wc_affiliate'
 const WC_ADMIN_ORDER = 'https://bigbattery.com/wp-admin/admin.php?page=wc-orders&action=edit&id='
 
+/** Strip tags and decode common HTML entities from WC/AffiliateWP strings. */
+function plainText(raw) {
+  let s = String(raw || '').replace(/<[^>]+>/g, ' ')
+  s = s.replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+  s = s.replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCharCode(parseInt(h, 16)))
+  s = s.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&nbsp;/g, ' ')
+  return s.replace(/\s+/g, ' ').trim()
+}
+
 const SEGMENTS = {
   so:               { label: 'SO orders',              short: 'Zoho B2B / quote orders (SO- prefix), no affiliate coupon' },
   bb:               { label: 'BB orders',              short: 'WooCommerce web orders (BB prefix) — includes affiliate-coupon orders' },
@@ -88,7 +98,26 @@ function toIsoDate(s) {
   if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t
   const us = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
   if (us) return `${us[3]}-${us[1].padStart(2, '0')}-${us[2].padStart(2, '0')}`
-  return t
+  const isoPrefix = t.match(/^(\d{4}-\d{2}-\d{2})/)
+  if (isoPrefix) return isoPrefix[1]
+  return ''
+}
+
+/** YYYY-MM → first/last calendar day of that month. */
+function monthBounds(ym) {
+  if (!/^\d{4}-\d{2}$/.test(ym)) return null
+  const [y, m] = ym.split('-').map(Number)
+  const from = `${ym}-01`
+  const lastDay = new Date(y, m, 0).getDate()
+  const to = `${ym}-${String(lastDay).padStart(2, '0')}`
+  return { from, to }
+}
+
+function inferMonthFromRange(from, to) {
+  if (!from || !to || !/^\d{4}-\d{2}-\d{2}$/.test(from) || !from.endsWith('-01')) return ''
+  const ym = from.slice(0, 7)
+  const bounds = monthBounds(ym)
+  return bounds?.from === from && bounds?.to === to ? ym : ''
 }
 
 function inferSegment(o) {
@@ -137,7 +166,7 @@ function WcIdCell({ o }) {
   )
 }
 
-function AffiliateCell({ o, showId = false, showEmail = true }) {
+function AffiliateCell({ o, showEmail = true }) {
   return (
     <>
       <td className="td text-sm max-w-[140px] truncate" title={o.affiliate_name}>
@@ -148,20 +177,47 @@ function AffiliateCell({ o, showId = false, showEmail = true }) {
           {o.affiliate_email || <span className="text-gray-300">—</span>}
         </td>
       )}
-      {showId && (
-        <td className="td text-sm font-mono text-gray-500">{o.affiliate_id ?? '—'}</td>
-      )}
+    </>
+  )
+}
+
+function CustomerCell({ o }) {
+  return (
+    <td className="td text-sm max-w-[160px] truncate" title={o.customer_name}>
+      {o.customer_name || '—'}
+    </td>
+  )
+}
+
+function CustomerTypeCell({ o }) {
+  return (
+    <td className="td text-sm text-gray-600 capitalize">{o.customer_type || '—'}</td>
+  )
+}
+
+function AwpIdCell({ o }) {
+  return (
+    <td className="td text-sm font-mono text-gray-500">{o.affiliate_id ?? '—'}</td>
+  )
+}
+
+function CustomerTailCells({ o, showAwpId = false }) {
+  return (
+    <>
+      <CustomerCell o={o} />
+      <CustomerTypeCell o={o} />
+      {showAwpId && <AwpIdCell o={o} />}
     </>
   )
 }
 
 function WcUpdateCell({ o }) {
   if (!o.wc_order_id) {
-    return <td className="td text-center"><span className="text-gray-300">—</span></td>
+    return <td className="td sticky-col-right text-center"><span className="text-gray-300">—</span></td>
   }
   const adminUrl = `${WC_ADMIN_ORDER}${o.wc_order_id}`
   return (
-    <td className="td text-center whitespace-nowrap">
+    <td className="td sticky-col-right text-center whitespace-nowrap">
       <a href={adminUrl} target="_blank" rel="noopener noreferrer"
         className="btn-primary inline-block px-2.5 py-1 text-xs font-medium"
         title="Abrir en WooCommerce wp-admin → click Update (crea referral AffiliateWP)">
@@ -186,13 +242,14 @@ function RefundCell({ o }) {
   }, [])
 
   const loadNotes = async () => {
-    if (!o.wc_order_id || notes || loadingNotes) return
+    if (!o.wc_order_id || loadingNotes) return
     setLoadingNotes(true)
     setNotesError(null)
     try {
       const res = await api.orderWcNotes(o.wc_order_id)
       setNotes(res)
     } catch (e) {
+      setNotes(null)
       setNotesError(e.message || 'Could not load order notes')
     } finally {
       setLoadingNotes(false)
@@ -202,7 +259,10 @@ function RefundCell({ o }) {
   const toggle = () => {
     const next = !open
     setOpen(next)
-    if (next) loadNotes()
+    if (next) {
+      setNotes(null)
+      loadNotes()
+    }
   }
 
   const details = o.refund_details || []
@@ -222,7 +282,7 @@ function RefundCell({ o }) {
           <Info size={14} />
         </button>
         {open && (
-          <div className="absolute right-0 top-full z-50 mt-1 w-[22rem] max-h-96 overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-xl text-left p-3 text-xs text-gray-700">
+          <div className="order-history-popover absolute right-0 top-full z-50 mt-1 w-80 sm:w-96 max-w-[min(24rem,calc(100vw-1.5rem))] max-h-96 overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-xl text-left p-3 text-xs text-gray-700">
             <p className="font-semibold text-sm text-navy-900 mb-2">Refund & order history</p>
 
             {o.is_refunded ? (
@@ -251,11 +311,13 @@ function RefundCell({ o }) {
                 <ul className="space-y-1.5">
                   {referrals.map(r => (
                     <li key={r.referral_id} className="rounded bg-purple-50 px-2 py-1.5 text-purple-900">
-                      <span className="font-mono">#{r.referral_id}</span>
-                      {r.amount != null && <> · {fmt(r.amount)}</>}
-                      {r.status && <span className="capitalize"> · {r.status}</span>}
-                      {r.description && <div className="mt-0.5 text-purple-800">{r.description}</div>}
-                      {r.date && <div className="text-[10px] text-purple-600/80 mt-0.5">{fmtDateTime(r.date)}</div>}
+                      <div className="whitespace-normal break-words [overflow-wrap:anywhere] [word-break:break-word]">
+                        <span className="font-mono">#{r.referral_id}</span>
+                        {r.amount != null && <> · {fmt(r.amount)}</>}
+                        {r.status && <span className="capitalize"> · {r.status}</span>}
+                        {r.description && <div className="mt-0.5 text-purple-800">{plainText(r.description)}</div>}
+                        {r.date && <div className="text-[10px] text-purple-600/80 mt-0.5">{fmtDateTime(r.date)}</div>}
+                      </div>
                     </li>
                   ))}
                 </ul>
@@ -268,13 +330,19 @@ function RefundCell({ o }) {
               {o.wc_order_id && loadingNotes && <p className="text-gray-400">Loading notes…</p>}
               {o.wc_order_id && notesError && <p className="text-red-600">{notesError}</p>}
               {o.wc_order_id && notes && !notes.configured && (
-                <p className="text-gray-400">WooCommerce API not configured on server.</p>
+                <p className="text-gray-500">
+                  WooCommerce REST API keys missing on the <strong>API server</strong> handling this request
+                  (not the browser). On Render they are set — restart local <code className="bg-gray-100 px-1 rounded">npm run dev</code> after
+                  adding <code className="bg-gray-100 px-1 rounded">WOO_CONSUMER_KEY</code> / <code className="bg-gray-100 px-1 rounded">WOO_CONSUMER_SECRET</code> to
+                  <code className="bg-gray-100 px-1 rounded"> affiliate-dashboard/.env</code>, or set
+                  <code className="bg-gray-100 px-1 rounded"> VITE_API_URL</code> to the Render API URL.
+                </p>
               )}
               {noteItems.length > 0 ? (
                 <ul className="space-y-2">
                   {noteItems.map(n => (
                     <li key={n.id} className="rounded bg-violet-50 px-2 py-1.5">
-                      <div className="text-gray-800">{n.text}</div>
+                      <div className="text-gray-800 whitespace-normal break-words [overflow-wrap:anywhere] [word-break:break-word]">{plainText(n.text)}</div>
                       <div className="text-[10px] text-gray-500 mt-0.5">{fmtDateTime(n.date)}</div>
                     </li>
                   ))}
@@ -329,11 +397,11 @@ function SearchableAffiliateSelect({ affiliates, value, onChange }) {
   }
 
   return (
-    <div ref={wrapRef} className="relative w-64">
+    <div ref={wrapRef} className="relative z-50 w-64">
       <div className="relative">
         <Search size={15} className="absolute left-2.5 top-2.5 text-gray-400 pointer-events-none" />
         <input
-          className="input pl-8 pr-8 w-full"
+          className="input pl-8 pr-8 w-full bg-white"
           placeholder="Search affiliate…"
           value={open ? q : display}
           onChange={e => { setQ(e.target.value); setOpen(true) }}
@@ -345,17 +413,17 @@ function SearchableAffiliateSelect({ affiliates, value, onChange }) {
         )}
       </div>
       {open && (
-        <ul className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-md border border-gray-200 bg-white py-1 shadow-lg text-sm">
+        <ul className="absolute z-50 mt-1 max-h-56 w-full overflow-auto rounded-md border border-gray-200 bg-white py-1 shadow-xl text-sm">
           <li>
-            <button type="button" className="w-full px-3 py-1.5 text-left hover:bg-gray-50 text-gray-500"
+            <button type="button" className="w-full px-3 py-1.5 text-left hover:bg-gray-50 text-gray-500 bg-white"
               onClick={() => pick('')}>All affiliates</button>
           </li>
           {filtered.length === 0
-            ? <li className="px-3 py-2 text-gray-400">No matches</li>
+            ? <li className="px-3 py-2 text-gray-400 bg-white">No matches</li>
             : filtered.map(a => (
-              <li key={a.affiliate_id}>
+              <li key={a.affiliate_id} className="bg-white">
                 <button type="button"
-                  className={`w-full px-3 py-1.5 text-left hover:bg-gray-50 truncate ${String(a.affiliate_id) === value ? 'bg-navy-50 text-navy-800' : ''}`}
+                  className={`w-full px-3 py-1.5 text-left hover:bg-gray-50 truncate bg-white ${String(a.affiliate_id) === value ? 'bg-navy-50 text-navy-800' : ''}`}
                   onClick={() => pick(a.affiliate_id)}>
                   {affiliateLabel(a)}
                 </button>
@@ -367,10 +435,9 @@ function SearchableAffiliateSelect({ affiliates, value, onChange }) {
   )
 }
 
-function DetailCells({ o }) {
+function ProductCells({ o }) {
   return (
     <>
-      <td className="td text-sm text-gray-600 capitalize">{o.customer_type || '—'}</td>
       <td className="td text-sm max-w-[280px] truncate" title={o.products_text}>{o.products_text || '—'}</td>
       <td className="td text-right text-sm">{o.items_sold ?? '—'}</td>
     </>
@@ -429,27 +496,45 @@ function TableFooter({ headers, summary, orderCount }) {
 
 function tableHeaders(tab) {
   const updateCol = 'WC Admin'
-  const detail = ['Customer type', 'Product(s)', 'Items sold']
+  const products = ['Product(s)', 'Items sold']
   const money = (commission = false) => commission
     ? ['Net', 'Revenue', 'Net Sales', 'Commission']
     : ['Net', 'Revenue', 'Net Sales']
 
-  const affiliate = ['Affiliate', 'Email', 'AWP ID']
-  const affiliateBasic = ['Affiliate', 'Email']
+  const affiliate = ['Affiliate', 'Email']
+  const rowTail = (withAwp = false) => withAwp
+    ? ['Customer', 'Customer type', 'AWP ID', 'WC ID']
+    : ['Customer', 'Customer type', 'WC ID']
 
   if (tab === 'wc_affiliate') {
-    return ['Order #', 'WC ID', 'Date', 'Customer', ...detail, 'Coupon', ...affiliate, ...money(true), 'Refund', 'Status', updateCol]
+    return ['Order #', 'Date', ...products, 'Coupon', ...affiliate, ...money(true), 'Refund', 'Status', ...rowTail(true), updateCol]
   }
   if (tab === 'zoho_affiliate') {
-    return ['Order #', 'WC ID', 'Date', 'Customer', ...detail, 'Coupon', ...affiliate, ...money(), 'Refund', 'Status', updateCol]
+    return ['Order #', 'Date', ...products, 'Coupon', ...affiliate, ...money(), 'Refund', 'Status', ...rowTail(true), updateCol]
   }
   if (tab === 'affiliate_coupon') {
-    return ['Order #', 'WC ID', 'Source', 'Date', 'Customer', ...detail, 'Coupon', ...affiliate, ...money(true), 'Refund', 'Status', updateCol]
+    return ['Order #', 'Source', 'Date', ...products, 'Coupon', ...affiliate, ...money(true), 'Refund', 'Status', ...rowTail(true), updateCol]
   }
   if (tab === 'bb' || tab === 'so' || tab === 'wc_only') {
-    return ['Order #', 'WC ID', 'Date', 'Customer', ...detail, 'Coupon', ...affiliateBasic, ...money(), 'Refund', 'Status', 'Reference', updateCol]
+    return ['Order #', 'Date', ...products, 'Coupon', ...affiliate, ...money(), 'Refund', 'Status', 'Reference', ...rowTail(false), updateCol]
   }
-  return ['Order #', 'WC ID', 'Type', 'Date', 'Customer', ...detail, 'Coupon', ...affiliateBasic, ...money(true), 'Refund', 'Status', updateCol]
+  return ['Order #', 'Type', 'Date', ...products, 'Coupon', ...affiliate, ...money(true), 'Refund', 'Status', ...rowTail(false), updateCol]
+}
+
+function RowTailCells({ o, showAwpId = false }) {
+  return (
+    <>
+      <CustomerTailCells o={o} showAwpId={showAwpId} />
+      <WcIdCell o={o} />
+    </>
+  )
+}
+function orderNumCell(o) {
+  return (
+    <td className="td sticky-col-left font-mono text-sm font-medium whitespace-nowrap">
+      {o.salesorder_number || o.salesorder_id}
+    </td>
+  )
 }
 
 function OrderRow({ o, tab }) {
@@ -460,16 +545,15 @@ function OrderRow({ o, tab }) {
   if (tab === 'wc_affiliate') {
     return (
       <tr className={`tr-hover ${ROW_ACCENT.wc_affiliate}`}>
-        <td className="td font-mono text-sm font-medium">{o.salesorder_number || o.salesorder_id}</td>
-        <WcIdCell o={o} />
+        {orderNumCell(o)}
         <td className="td text-sm text-gray-600 whitespace-nowrap">{fmtDateTime(o.order_datetime || o.order_date)}</td>
-        <td className="td text-sm max-w-[160px] truncate" title={o.customer_name}>{o.customer_name || '—'}</td>
-        <DetailCells o={o} />
+        <ProductCells o={o} />
         <td className="td font-mono text-sm">{o.coupon_code}</td>
-        <AffiliateCell o={o} showId />
+        <AffiliateCell o={o} />
         <MoneyCells o={o} showCommission />
         <RefundCell o={o} />
         <td className="td text-sm capitalize text-gray-600">{o.status || '—'}</td>
+        <RowTailCells o={o} showAwpId />
         <WcUpdateCell o={o} />
       </tr>
     )
@@ -478,16 +562,15 @@ function OrderRow({ o, tab }) {
   if (tab === 'zoho_affiliate') {
     return (
       <tr className={`tr-hover ${ROW_ACCENT.zoho_affiliate}`}>
-        <td className="td font-mono text-sm font-medium">{o.salesorder_number || o.salesorder_id}</td>
-        <WcIdCell o={o} />
+        {orderNumCell(o)}
         <td className="td text-sm text-gray-600 whitespace-nowrap">{fmtDateTime(o.order_datetime || o.order_date)}</td>
-        <td className="td text-sm max-w-[160px] truncate" title={o.customer_name}>{o.customer_name || '—'}</td>
-        <DetailCells o={o} />
+        <ProductCells o={o} />
         <td className="td font-mono text-sm">{o.coupon_code}</td>
-        <AffiliateCell o={o} showId />
+        <AffiliateCell o={o} />
         <MoneyCells o={o} />
         <RefundCell o={o} />
         <td className="td text-sm capitalize text-gray-600">{o.status || '—'}</td>
+        <RowTailCells o={o} showAwpId />
         <WcUpdateCell o={o} />
       </tr>
     )
@@ -496,17 +579,16 @@ function OrderRow({ o, tab }) {
   if (tab === 'affiliate_coupon') {
     return (
       <tr className={`tr-hover ${accent}`}>
-        <td className="td font-mono text-sm font-medium">{o.salesorder_number || o.salesorder_id}</td>
-        <WcIdCell o={o} />
+        {orderNumCell(o)}
         <td className="td"><SourceBadge source={source} /></td>
         <td className="td text-sm text-gray-600 whitespace-nowrap">{fmtDateTime(o.order_datetime || o.order_date)}</td>
-        <td className="td text-sm max-w-[160px] truncate" title={o.customer_name}>{o.customer_name || '—'}</td>
-        <DetailCells o={o} />
+        <ProductCells o={o} />
         <td className="td font-mono text-sm">{o.coupon_code}</td>
-        <AffiliateCell o={o} showId />
+        <AffiliateCell o={o} />
         <MoneyCells o={o} showCommission />
         <RefundCell o={o} />
         <td className="td text-sm capitalize text-gray-600">{o.status || '—'}</td>
+        <RowTailCells o={o} showAwpId />
         <WcUpdateCell o={o} />
       </tr>
     )
@@ -516,17 +598,16 @@ function OrderRow({ o, tab }) {
     const accent = tab === 'wc_only' ? ROW_ACCENT.wc_only : ROW_ACCENT[tab]
     return (
       <tr className={`tr-hover ${accent}`}>
-        <td className="td font-mono text-sm font-medium">{o.salesorder_number || o.salesorder_id}</td>
-        <WcIdCell o={o} />
+        {orderNumCell(o)}
         <td className="td text-sm text-gray-600 whitespace-nowrap">{fmtDateTime(o.order_datetime || o.order_date)}</td>
-        <td className="td text-sm max-w-[160px] truncate" title={o.customer_name}>{o.customer_name || '—'}</td>
-        <DetailCells o={o} />
+        <ProductCells o={o} />
         <td className="td font-mono text-sm">{o.coupon_code || <span className="text-gray-300">—</span>}</td>
-        <AffiliateCell o={o} showEmail showId={false} />
+        <AffiliateCell o={o} />
         <MoneyCells o={o} />
         <RefundCell o={o} />
         <td className="td text-sm capitalize text-gray-600">{o.status || '—'}</td>
         <td className="td text-xs text-gray-500 font-mono">{tab === 'wc_only' ? 'WC only' : (o.reference_number || '—')}</td>
+        <RowTailCells o={o} />
         <WcUpdateCell o={o} />
       </tr>
     )
@@ -534,17 +615,16 @@ function OrderRow({ o, tab }) {
 
   return (
     <tr className={`tr-hover ${accent}`}>
-      <td className="td font-mono text-sm font-medium">{o.salesorder_number || o.salesorder_id}</td>
-      <WcIdCell o={o} />
+      {orderNumCell(o)}
       <td className="td"><SegmentBadge segment={seg} /></td>
       <td className="td text-sm text-gray-600 whitespace-nowrap">{fmtDateTime(o.order_datetime || o.order_date)}</td>
-      <td className="td text-sm max-w-[160px] truncate" title={o.customer_name}>{o.customer_name || '—'}</td>
-      <DetailCells o={o} />
+      <ProductCells o={o} />
       <td className="td font-mono text-sm">{o.coupon_code || <span className="text-gray-300">—</span>}</td>
-      <AffiliateCell o={o} showEmail showId={false} />
+      <AffiliateCell o={o} />
       <MoneyCells o={o} showCommission />
       <RefundCell o={o} />
       <td className="td text-sm capitalize text-gray-600">{o.status || '—'}</td>
+      <RowTailCells o={o} />
       <WcUpdateCell o={o} />
     </tr>
   )
@@ -597,6 +677,11 @@ export default function Orders() {
   const status   = searchParams.get('status') || ''
   const dateFrom = toIsoDate(searchParams.get('from') || '')
   const dateTo   = toIsoDate(searchParams.get('to') || '')
+  const monthParam = searchParams.get('month') || ''
+  const monthFilter = useMemo(() => {
+    if (/^\d{4}-\d{2}$/.test(monthParam)) return monthParam
+    return inferMonthFromRange(dateFrom, dateTo)
+  }, [monthParam, dateFrom, dateTo])
   const couponFilter = searchParams.get('coupon') || ''
   const affiliateId = searchParams.get('affiliate') || ''
   const tab      = searchParams.get('tab') || (couponFilter === 'yes' ? 'wc_affiliate' : DEFAULT_TAB)
@@ -608,12 +693,45 @@ export default function Orders() {
     setOffset(0)
   }
 
+  const setMonthFilter = (ym) => {
+    const p = new URLSearchParams(searchParams)
+    if (ym) {
+      const bounds = monthBounds(ym)
+      if (!bounds) return
+      p.set('month', ym)
+      p.set('from', bounds.from)
+      p.set('to', bounds.to)
+    } else {
+      p.delete('month')
+      p.delete('from')
+      p.delete('to')
+    }
+    setSearchParams(p)
+    setOffset(0)
+  }
+
+  const setDateFrom = (v) => {
+    const p = new URLSearchParams(searchParams)
+    v ? p.set('from', v) : p.delete('from')
+    p.delete('month')
+    setSearchParams(p)
+    setOffset(0)
+  }
+
+  const setDateTo = (v) => {
+    const p = new URLSearchParams(searchParams)
+    v ? p.set('to', v) : p.delete('to')
+    p.delete('month')
+    setSearchParams(p)
+    setOffset(0)
+  }
+
   const setTab = (key) => setParam('tab', key === DEFAULT_TAB ? '' : key)
 
-  const hasActiveFilters = !!(search || status || dateFrom || dateTo || affiliateId)
+  const hasActiveFilters = !!(search || status || dateFrom || dateTo || monthFilter || affiliateId)
   const clearFilters = () => {
     const p = new URLSearchParams(searchParams)
-    ;['q', 'status', 'from', 'to', 'affiliate'].forEach(k => p.delete(k))
+    ;['q', 'status', 'from', 'to', 'month', 'affiliate'].forEach(k => p.delete(k))
     setSearchParams(p)
     setOffset(0)
   }
@@ -624,8 +742,8 @@ export default function Orders() {
     const params = { number: PAGE_SIZE, offset, order: 'DESC' }
     if (search)   params.search = search
     if (status)   params.status = status
-    if (dateFrom) params.date_from = dateFrom
-    if (dateTo)   params.date_to = dateTo
+    if (dateFrom && /^\d{4}-\d{2}-\d{2}$/.test(dateFrom)) params.date_from = dateFrom
+    if (dateTo && /^\d{4}-\d{2}-\d{2}$/.test(dateTo)) params.date_to = dateTo
     if (tab !== 'all') params.segment = tab
     if (couponFilter === 'yes' || couponFilter === 'true') params.coupon = 'yes'
     if (affiliateId) params.affiliate_id = affiliateId
@@ -647,12 +765,17 @@ export default function Orders() {
     const rawTo = searchParams.get('to') || ''
     const isoFrom = toIsoDate(rawFrom)
     const isoTo = toIsoDate(rawTo)
-    if ((rawFrom && isoFrom !== rawFrom) || (rawTo && isoTo !== rawTo)) {
-      const p = new URLSearchParams(searchParams)
-      if (rawFrom) p.set('from', isoFrom); else p.delete('from')
-      if (rawTo) p.set('to', isoTo); else p.delete('to')
-      setSearchParams(p, { replace: true })
+    const p = new URLSearchParams(searchParams)
+    let changed = false
+    if (rawFrom && isoFrom !== rawFrom) {
+      if (isoFrom) p.set('from', isoFrom); else p.delete('from')
+      changed = true
     }
+    if (rawTo && isoTo !== rawTo) {
+      if (isoTo) p.set('to', isoTo); else p.delete('to')
+      changed = true
+    }
+    if (changed) setSearchParams(p, { replace: true })
   }, [searchParams, setSearchParams])
 
   useEffect(() => {
@@ -665,8 +788,6 @@ export default function Orders() {
     [affiliates, affiliateId],
   )
   const showCommissionTab = tab === 'wc_affiliate' || tab === 'affiliate_coupon' || tab === 'all'
-
-  const showWcBulk = tab === 'wc_affiliate' || tab === 'affiliate_coupon'
 
   const s = data.summary
   const apiHasSegments = s != null && (s.so != null || s.wc_affiliate != null)
@@ -707,14 +828,7 @@ export default function Orders() {
         title="Orders"
         subtitle="SO · BB web · Affiliate Coupon (WC linked) · Zoho affiliate coupon"
         actions={
-          <div className="flex flex-wrap items-center gap-2">
-            {showWcBulk && (
-              <span className="text-xs text-gray-500 max-w-xs" title="Plan B — corre en tu PC">
-                Auto: <code className="bg-gray-100 px-1 rounded">npm run wc:admin-update</code>
-              </span>
-            )}
-            <ExportButtons baseName={`orders-${tab}`} sheetName="Orders" columns={EXPORT_COLUMNS} rows={exportRows} />
-          </div>
+          <ExportButtons baseName={`orders-${tab}`} sheetName="Orders" columns={EXPORT_COLUMNS} rows={exportRows} />
         }
       />
 
@@ -787,8 +901,6 @@ export default function Orders() {
           <strong> Zoho affiliate coupon</strong> = affiliate-type code on the order but not linked in WooCommerce (no commission).
           SO/BB tabs exclude affiliate-coupon orders.
           <strong> WC only (not in Zoho)</strong> = BB orders in WooCommerce that are not in Zoho yet — does not change Zoho tab counts.
-          La API REST no crea el <strong>referral</strong> en AffiliateWP — usa <strong>Abrir WC</strong> y pulsa Update,
-          o el script local <code className="bg-blue-100 px-1 rounded">npm run wc:admin-update</code>.
         </span>
       </div>
 
@@ -837,8 +949,8 @@ export default function Orders() {
         </div>
       )}
 
-      <div className="px-6 mb-4 flex flex-wrap items-end gap-3">
-        <label className="block">
+      <div className="relative z-40 px-6 mb-4 flex flex-wrap items-end gap-3">
+        <label className="block relative">
           <span className="text-xs text-gray-500 mb-1 block">Affiliate</span>
           <SearchableAffiliateSelect affiliates={affiliates} value={affiliateId}
             onChange={v => setParam('affiliate', v)} />
@@ -854,14 +966,19 @@ export default function Orders() {
           </select>
         </label>
         <label className="block">
+          <span className="text-xs text-gray-500 mb-1 block">Month</span>
+          <input type="month" className="input w-40" value={monthFilter}
+            onChange={e => setMonthFilter(e.target.value)} />
+        </label>
+        <label className="block">
           <span className="text-xs text-gray-500 mb-1 block">From</span>
           <input type="date" className="input" value={dateFrom}
-            onChange={e => setParam('from', e.target.value)} />
+            onChange={e => setDateFrom(e.target.value)} />
         </label>
         <label className="block">
           <span className="text-xs text-gray-500 mb-1 block">To</span>
           <input type="date" className="input" value={dateTo}
-            onChange={e => setParam('to', e.target.value)} />
+            onChange={e => setDateTo(e.target.value)} />
         </label>
         {hasActiveFilters && (
           <button type="button" onClick={clearFilters}
@@ -872,12 +989,14 @@ export default function Orders() {
       </div>
 
       <div className="px-6 pb-8">
-        <div className="card overflow-x-auto">
-          <table className="w-full">
+        <div className="card orders-table-scroll">
+          <table className="orders-table">
             <thead>
               <tr className="border-b">
                 {headers.map((h, i) => (
                   <th key={i} className={`th ${
+                    i === 0 ? 'sticky-corner min-w-[7rem]' : i === headers.length - 1 ? 'sticky-corner-right min-w-[6.5rem]' : 'sticky-thead'
+                  } ${
                     RIGHT_HEADERS.includes(h) ? 'text-right' : h === 'WC Admin' ? 'text-center' : ''}`}>{h}</th>
                 ))}
               </tr>

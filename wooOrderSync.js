@@ -8,13 +8,16 @@ config()
 
 const WOO_BASE = (process.env.WOO_STORE_URL || 'https://bigbattery.com').replace(/\/+$/, '')
 const WOO_API = `${WOO_BASE}/wp-json/wc/v3`
-const WOO_AUTH = Buffer.from(
-  `${process.env.WOO_CONSUMER_KEY}:${process.env.WOO_CONSUMER_SECRET}`
-).toString('base64')
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 
 function wooConfigured() {
   return !!(process.env.WOO_CONSUMER_KEY && process.env.WOO_CONSUMER_SECRET)
+}
+
+function wooAuthHeader() {
+  const key = process.env.WOO_CONSUMER_KEY || ''
+  const secret = process.env.WOO_CONSUMER_SECRET || ''
+  return `Basic ${Buffer.from(`${key}:${secret}`).toString('base64')}`
 }
 
 function parseTs(v) {
@@ -59,11 +62,20 @@ export function mapWcOrder(o) {
 
 async function wooGet(endpoint, params = {}) {
   const res = await axios.get(`${WOO_API}${endpoint}`, {
-    headers: { Authorization: `Basic ${WOO_AUTH}` },
+    headers: { Authorization: wooAuthHeader() },
     params,
     timeout: 60000,
   })
   return res
+}
+
+function decodePlainText(raw) {
+  let s = String(raw || '').replace(/<[^>]+>/g, ' ')
+  s = s.replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+  s = s.replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCharCode(parseInt(h, 16)))
+  s = s.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&nbsp;/g, ' ')
+  return s.replace(/\s+/g, ' ').trim()
 }
 
 export async function fetchWcOrderNotes(orderId) {
@@ -77,7 +89,7 @@ export async function fetchWcOrderNotes(orderId) {
     notes: notes.map(n => ({
       id: n.id,
       date: n.date_created || n.date_created_gmt,
-      text: String(n.note || '').replace(/<[^>]+>/g, '').trim(),
+      text: decodePlainText(n.note),
       customer_note: !!n.customer_note,
     })),
   }

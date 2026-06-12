@@ -206,6 +206,28 @@ export async function initTables() {
       updated_by        TEXT,
       updated_at        TIMESTAMPTZ DEFAULT NOW()
     );
+
+    -- Commission ledger derived from Zoho/WC orders (Supabase-only; not synced from WP).
+    -- Dashboard charts use order_date here instead of awp_referrals.date.
+    CREATE TABLE IF NOT EXISTS order_commissions (
+      salesorder_number  TEXT PRIMARY KEY,
+      wc_order_id        INTEGER,
+      order_date         DATE NOT NULL,
+      affiliate_id       INTEGER,
+      affiliate_name     TEXT,
+      coupon_code        TEXT,
+      net_sales          NUMERIC(12,2),
+      commission_rate    NUMERIC(5,2),
+      commission_amount  NUMERIC(12,2) NOT NULL DEFAULT 0,
+      order_status       TEXT,
+      awp_referral_id    INTEGER,
+      awp_status         TEXT,
+      payout_status      TEXT NOT NULL DEFAULT 'estimated',
+      updated_at         TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_order_commissions_order_date ON order_commissions(order_date);
+    CREATE INDEX IF NOT EXISTS idx_order_commissions_affiliate ON order_commissions(affiliate_id);
+    CREATE INDEX IF NOT EXISTS idx_order_commissions_wc_order ON order_commissions(wc_order_id);
   `)
 
   await pool.query(`

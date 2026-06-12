@@ -5,13 +5,16 @@ config()
 
 const WOO_BASE = (process.env.WOO_STORE_URL || 'https://bigbattery.com').replace(/\/+$/, '')
 const WOO_API = `${WOO_BASE}/wp-json/wc/v3`
-const WOO_AUTH = Buffer.from(
-  `${process.env.WOO_CONSUMER_KEY}:${process.env.WOO_CONSUMER_SECRET}`
-).toString('base64')
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 
 export function wooConfigured() {
   return !!(process.env.WOO_CONSUMER_KEY && process.env.WOO_CONSUMER_SECRET)
+}
+
+function wooAuthHeader() {
+  const key = process.env.WOO_CONSUMER_KEY || ''
+  const secret = process.env.WOO_CONSUMER_SECRET || ''
+  return `Basic ${Buffer.from(`${key}:${secret}`).toString('base64')}`
 }
 
 function wrapWooError(e) {
@@ -31,7 +34,7 @@ async function wooRequest(method, endpoint, data = null) {
     const res = await axios({
       method,
       url: `${WOO_API}${endpoint}`,
-      headers: { Authorization: `Basic ${WOO_AUTH}`, 'Content-Type': 'application/json' },
+      headers: { Authorization: wooAuthHeader(), 'Content-Type': 'application/json' },
       data,
       timeout: 60000,
     })

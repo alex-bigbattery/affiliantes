@@ -22,4 +22,43 @@
   .th   { @apply px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide bg-gray-50; }
   .td   { @apply px-4 py-3 text-sm text-gray-700; }
   .tr-hover { @apply hover:bg-blue-50/50 transition-colors; }
+
+  /* Wide tables — scroll inside viewport; sticky key columns */
+  .orders-table-scroll {
+    @apply overflow-auto max-h-[min(72vh,calc(100vh-13rem))];
+    overscroll-behavior: contain;
+  }
+  .orders-table { @apply w-full min-w-max; }
+  .sticky-thead { @apply sticky top-0 z-20 bg-gray-50; }
+  .sticky-corner {
+    @apply sticky top-0 left-0 z-30 bg-gray-50;
+    box-shadow: 2px 2px 6px -2px rgba(0, 0, 0, 0.12);
+  }
+  .sticky-col-left {
+    @apply sticky left-0 z-10 bg-white;
+    box-shadow: 4px 0 8px -4px rgba(0, 0, 0, 0.1);
+  }
+  .tr-hover:hover .sticky-col-left { @apply bg-blue-50/50; }
+  .sticky-col-right {
+    @apply sticky right-0 z-10 bg-white;
+    box-shadow: -4px 0 8px -4px rgba(0, 0, 0, 0.1);
+  }
+  .tr-hover:hover .sticky-col-right { @apply bg-blue-50/50; }
+  .sticky-corner-right {
+    @apply sticky top-0 right-0 z-30 bg-gray-50;
+    box-shadow: -2px 2px 6px -2px rgba(0, 0, 0, 0.12);
+  }
+
+  .order-history-popover {
+    @apply whitespace-normal;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+  .order-history-popover p,
+  .order-history-popover li,
+  .order-history-popover div {
+    @apply whitespace-normal;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
 }

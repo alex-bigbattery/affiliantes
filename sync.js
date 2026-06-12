@@ -233,15 +233,14 @@ export async function runSync() {
     console.log(`    ✔ ${counts.payouts} payouts`)
     await sleep(600)
 
-    // 4. Visits (last 500 only — visits can be huge)
-    console.log('    Fetching visits (last 500)...')
+    // 4. Visits — full paginated sync (can be large; throttled like referrals)
+    console.log('    Fetching visits (all pages)...')
     let visits = []
     try {
-      visits = await awp('/visits', { number: 100, offset: 0, order: 'DESC' })
-      if (!Array.isArray(visits)) visits = []
+      visits = await fetchAll('/visits', { order: 'DESC' }, 800)
     } catch (_) {}
     counts.visits = await upsertVisits(visits)
-    console.log(`    ✔ ${counts.visits} visits (recent)`)
+    console.log(`    ✔ ${counts.visits} visits`)
 
   } catch (e) {
     error = e.message || String(e)

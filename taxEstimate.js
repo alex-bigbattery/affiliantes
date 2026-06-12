@@ -1,6 +1,7 @@
 // Sales Tax Estimator — multi-provider + Supabase overrides
 
 import { pool } from './db.js'
+import { toIsoDateOnly, orderDateFromClause, orderDateToClause } from './dateUtils.js'
 import {
   STATE_RATES, normalizeUsState, round2, num,
   extractShippingAddress,
@@ -71,7 +72,7 @@ async function mapOrderTax(row, { provider, overrides, cache, useOverrides }) {
   return {
     salesorder_id: row.salesorder_id,
     salesorder_number: row.salesorder_number,
-    order_date: row.order_date ? String(row.order_date).slice(0, 10) : null,
+    order_date: toIsoDateOnly(row.order_date),
     customer_name: row.customer_name,
     status: row.status,
     sub_total: round2(subtotal),
@@ -245,12 +246,12 @@ export function registerTaxEstimate(app, { normalizeDateParam } = {}) {
       const fromDate = normalizeDateParam?.(date_from)
       if (fromDate) {
         vals.push(fromDate)
-        clauses.push(`s.order_date::date >= $${vals.length}::date`)
+        clauses.push(orderDateFromClause('s', `$${vals.length}`))
       }
       const toDate = normalizeDateParam?.(date_to)
       if (toDate) {
         vals.push(toDate)
-        clauses.push(`s.order_date::date <= $${vals.length}::date`)
+        clauses.push(orderDateToClause('s', `$${vals.length}`))
       }
 
       const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''

@@ -1,27 +1,32 @@
-import { useState, useEffect, useCallback } from 'react'
+﻿import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { api, fmt, fmtDate } from '../api'
 import { PageHeader, Spinner, ErrorMsg, StatusBadge, Empty } from '../components/Layout'
-import { Filter, CheckSquare, Square, ChevronLeft, ChevronRight } from 'lucide-react'
+import { CheckSquare, Square, ChevronLeft, ChevronRight } from 'lucide-react'
 import ExportButtons from '../components/ExportButtons'
 
-const STATUSES = ['all','unpaid','paid','pending','rejected']
+const STATUSES = ['all', 'open', 'estimated', 'unpaid', 'paid', 'pending', 'rejected']
 const PAGE_SIZE = 50
+
+function rowKey(r) {
+  return r.salesorder_number || String(r.referral_id)
+}
 
 export default function Referrals() {
   const [searchParams, setSearchParams] = useSearchParams()
-  const [referrals, setReferrals]   = useState([])
-  const [loading, setLoading]       = useState(true)
-  const [error, setError]           = useState(null)
-  const [selected, setSelected]     = useState(new Set())
+  const [referrals, setReferrals] = useState([])
+  const [total, setTotal] = useState(0)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+  const [selected, setSelected] = useState(new Set())
   const [bulkWorking, setBulkWorking] = useState(false)
   const [affiliates, setAffiliates] = useState([])
-  const [offset, setOffset]         = useState(0)
+  const [offset, setOffset] = useState(0)
 
-  const status    = searchParams.get('status')    || 'all'
-  const affId     = searchParams.get('affiliate') || ''
-  const dateFrom  = searchParams.get('from')      || ''
-  const dateTo    = searchParams.get('to')        || ''
+  const status = searchParams.get('status') || 'all'
+  const affId = searchParams.get('affiliate') || ''
+  const dateFrom = searchParams.get('from') || ''
+  const dateTo = searchParams.get('to') || ''
 
   const set = (k, v) => {
     const p = new URLSearchParams(searchParams)
@@ -35,25 +40,29 @@ export default function Referrals() {
     setLoading(true)
     setError(null)
     const params = {
-      number:     PAGE_SIZE,
+      number: PAGE_SIZE,
       offset,
-      orderby:    'referral_id',
-      order:      'DESC',
+      orderby: 'date',
+      order: 'DESC',
     }
-    if (status && status !== 'all') params.status       = status
-    if (affId)                       params.affiliate_id = affId
-    if (dateFrom)                    params.date         = dateFrom
-    if (dateTo)                      params.end_date     = dateTo
+    if (status && status !== 'all') params.status = status
+    if (affId) params.affiliate_id = affId
+    if (dateFrom) params.date = dateFrom
+    if (dateTo) params.end_date = dateTo
 
     api.referrals(params)
-      .then(d => { setReferrals(Array.isArray(d) ? d : []) })
+      .then(d => {
+        const items = Array.isArray(d) ? d : (d?.items || [])
+        setReferrals(items)
+        setTotal(d?.total ?? items.length)
+      })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false))
   }, [status, affId, dateFrom, dateTo, offset])
 
   useEffect(() => { load() }, [load])
   useEffect(() => {
-    api.affiliates({ number: 100 }).then(d => setAffiliates(Array.isArray(d) ? d : []))
+    api.affiliates({ number: 500 }).then(d => setAffiliates(Array.isArray(d) ? d : []))
   }, [])
 
   const toggleSelect = id => setSelected(prev => {
@@ -62,17 +71,17 @@ export default function Referrals() {
     return s
   })
   const toggleAll = () =>
-    setSelected(selected.size === referrals.length ? new Set() : new Set(referrals.map(r => r.referral_id)))
+    setSelected(selected.size === referrals.length ? new Set() : new Set(referrals.map(rowKey)))
 
   const bulkUpdate = async (newStatus) => {
     if (!selected.size) return
-    if (!confirm(`Change ${selected.size} referrals to "${newStatus}"?`)) return
+    if (!confirm(`Change ${selected.size} commission rows to "${newStatus}"?`)) return
     setBulkWorking(true)
     try {
-    const res = await api.bulkReferrals([...selected], newStatus)
+      const res = await api.bulkReferrals([...selected], newStatus)
       if (res.failed > 0) {
         alert(`Updated ${res.updated}, failed ${res.failed}: ${res.errors?.[0]?.error || 'see console'}`)
-        console.warn('Bulk referral errors', res.errors)
+        console.warn('Bulk errors', res.errors)
       }
       setSelected(new Set())
       load()
@@ -80,51 +89,60 @@ export default function Referrals() {
     finally { setBulkWorking(false) }
   }
 
-  const updateOne = async (id, newStatus) => {
+  const updateOne = async (r, newStatus) => {
     try {
+      const id = rowKey(r)
       await api.updateReferral(id, { status: newStatus })
-      setReferrals(prev => prev.map(r => r.referral_id === id ? { ...r, status: newStatus } : r))
+      setReferrals(prev => prev.map(x => rowKey(x) === id ? { ...x, status: newStatus } : x))
     } catch (e) { alert(e.message) }
   }
 
-  const deleteOne = async (id) => {
-    if (!confirm(`Delete referral #${id}?`)) return
-    try {
-      await api.deleteReferral(id)
-      setReferrals(prev => prev.filter(r => r.referral_id !== id))
-    } catch (e) { alert(e.message) }
-  }
+  const affLabel = (r) =>
+    r.affiliate_name
+    || affiliates.find(a => a.affiliate_id === r.affiliate_id)?.display_name
+    || affiliates.find(a => a.affiliate_id === r.affiliate_id)?.payment_email
+    || (r.affiliate_id ? `#${r.affiliate_id}` : '—')
 
   const exportColumns = [
-    { header: 'ID',           value: r => r.referral_id },
-    { header: 'Date',         value: r => r.date },
+    { header: 'Order', value: r => r.salesorder_number || r.referral_id },
+    { header: 'Date', value: r => r.date },
     { header: 'Affiliate ID', value: r => r.affiliate_id },
-    { header: 'Affiliate',    value: r => affiliates.find(a => a.affiliate_id === r.affiliate_id)?.display_name
-                                       || affiliates.find(a => a.affiliate_id === r.affiliate_id)?.payment_email
-                                       || `#${r.affiliate_id}` },
+    { header: 'Affiliate', value: affLabel },
+    { header: 'Coupon', value: r => r.coupon_code },
     { header: 'WC Reference', value: r => r.reference },
-    { header: 'Description',  value: r => r.description },
-    { header: 'Amount',       value: r => Number(r.amount || 0) },
-    { header: 'Status',       value: r => r.status },
+    { header: 'Net sales', value: r => Number(r.net_sales || 0) },
+    { header: 'Rate %', value: r => r.commission_rate },
+    { header: 'Commission', value: r => Number(r.amount || 0) },
+    { header: 'Status', value: r => r.status },
+    { header: 'Source', value: r => r.source },
   ]
 
-  const totalUnpaid = referrals.filter(r => r.status === 'unpaid').reduce((s, r) => s + parseFloat(r.amount || 0), 0)
+  const openTotal = referrals
+    .filter(r => r.status !== 'paid')
+    .reduce((s, r) => s + parseFloat(r.amount || 0), 0)
+
+  const page = Math.floor(offset / PAGE_SIZE) + 1
+  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE))
 
   return (
     <div>
       <PageHeader
-        title="Referrals"
-        subtitle={`${referrals.length} records loaded${totalUnpaid > 0 ? ` · ${fmt(totalUnpaid)} pending payment` : ''}`}
+        title="Commissions"
+        subtitle={`${total} orders with affiliate coupons · by order date (Supabase)`}
         actions={
-          <ExportButtons baseName="referrals" sheetName="Referrals" columns={exportColumns} rows={referrals} />
+          <ExportButtons baseName="commissions" sheetName="Commissions" columns={exportColumns} rows={referrals} />
         }
       />
 
-      {/* Status tabs */}
-      <div className="flex gap-1 border-b mx-6 mb-4">
+      <p className="px-6 -mt-2 mb-4 text-xs text-gray-500">
+        Complete ledger from Zoho/WC orders. Rows marked <strong>estimated</strong> have no AffiliateWP referral yet.
+        Status changes save in Supabase; WP-linked rows also sync to AffiliateWP when possible.
+      </p>
+
+      <div className="flex flex-wrap gap-1 border-b mx-6 mb-4">
         {STATUSES.map(s => (
           <button key={s} onClick={() => set('status', s === 'all' ? '' : s)}
-            className={`px-4 py-2 text-sm font-medium capitalize transition-colors border-b-2 -mb-px ${
+            className={`px-3 py-2 text-sm font-medium capitalize transition-colors border-b-2 -mb-px ${
               status === (s === 'all' ? '' : s) || (s === 'all' && !status)
                 ? 'border-navy-700 text-navy-700'
                 : 'border-transparent text-gray-500 hover:text-gray-700'
@@ -134,7 +152,6 @@ export default function Referrals() {
         ))}
       </div>
 
-      {/* Filters */}
       <div className="flex flex-wrap items-center gap-3 px-6 mb-4">
         <select className="select w-52" value={affId} onChange={e => set('affiliate', e.target.value)}>
           <option value="">All affiliates</option>
@@ -160,13 +177,12 @@ export default function Referrals() {
         )}
       </div>
 
-      {/* Bulk actions */}
       {selected.size > 0 && (
         <div className="mx-6 mb-3 px-4 py-2.5 bg-navy-50 border border-navy-100 rounded-lg flex items-center gap-3 text-sm">
           <span className="font-medium text-navy-700">{selected.size} selected</span>
           <div className="flex gap-2">
             <button className="btn-primary text-xs py-1" onClick={() => bulkUpdate('paid')} disabled={bulkWorking}>
-              ✓ Mark paid
+              Mark paid
             </button>
             <button className="btn-outline text-xs py-1" onClick={() => bulkUpdate('unpaid')} disabled={bulkWorking}>
               Mark unpaid
@@ -175,7 +191,7 @@ export default function Referrals() {
               Reject
             </button>
           </div>
-          {bulkWorking && <span className="text-gray-400 text-xs">Processing...</span>}
+          {bulkWorking && <span className="text-gray-400 text-xs">Processing…</span>}
         </div>
       )}
 
@@ -193,7 +209,7 @@ export default function Referrals() {
                       : <Square size={15} />}
                   </button>
                 </th>
-                {['ID','Date','Affiliate','WC Reference','Description','Amount','Status','Actions'].map(h =>
+                {['Order', 'Date', 'Affiliate', 'Coupon', 'WC #', 'Commission', 'Status', 'Actions'].map(h =>
                   <th key={h} className="th">{h}</th>
                 )}
               </tr>
@@ -202,65 +218,59 @@ export default function Referrals() {
               {loading
                 ? <tr><td colSpan={9}><Spinner /></td></tr>
                 : referrals.length === 0
-                  ? <tr><td colSpan={9}><Empty label="No referrals for these filters" /></td></tr>
-                  : referrals.map(r => (
-                    <tr key={r.referral_id} className={`tr-hover ${selected.has(r.referral_id) ? 'bg-blue-50' : ''}`}>
-                      <td className="td">
-                        <button onClick={() => toggleSelect(r.referral_id)} className="text-gray-400 hover:text-navy-700">
-                          {selected.has(r.referral_id) ? <CheckSquare size={15} className="text-navy-700" /> : <Square size={15} />}
-                        </button>
-                      </td>
-                      <td className="td font-mono text-xs">#{r.referral_id}</td>
-                      <td className="td text-xs text-gray-500">{fmtDate(r.date)}</td>
-                      <td className="td text-xs">
-                        <a href={`/affiliates/${r.affiliate_id}`}
-                          className="text-navy-500 hover:underline">
-                          {affiliates.find(a => a.affiliate_id === r.affiliate_id)?.display_name
-                            || affiliates.find(a => a.affiliate_id === r.affiliate_id)?.payment_email
-                            || `#${r.affiliate_id}`}
-                        </a>
-                      </td>
-                      <td className="td font-mono text-xs">{r.reference || '—'}</td>
-                      <td className="td max-w-xs truncate text-sm" title={r.description}>{r.description || '—'}</td>
-                      <td className="td font-semibold text-sm">{fmt(r.amount)}</td>
-                      <td className="td"><StatusBadge status={r.status} /></td>
-                      <td className="td">
-                        <div className="flex items-center gap-0.5">
-                          {r.status === 'unpaid' && (
-                            <button className="btn-ghost text-green-700 text-xs py-0.5 px-1.5"
-                              onClick={() => updateOne(r.referral_id, 'paid')}>Pay</button>
-                          )}
-                          {r.status === 'paid' && (
-                            <button className="btn-ghost text-xs py-0.5 px-1.5 text-gray-500"
-                              onClick={() => updateOne(r.referral_id, 'unpaid')}>↩</button>
-                          )}
-                          {r.status === 'pending' && (
-                            <>
+                  ? <tr><td colSpan={9}><Empty label="No commissions for these filters" /></td></tr>
+                  : referrals.map(r => {
+                    const id = rowKey(r)
+                    return (
+                      <tr key={id} className={`tr-hover ${selected.has(id) ? 'bg-blue-50' : ''}`}>
+                        <td className="td">
+                          <button onClick={() => toggleSelect(id)} className="text-gray-400 hover:text-navy-700">
+                            {selected.has(id) ? <CheckSquare size={15} className="text-navy-700" /> : <Square size={15} />}
+                          </button>
+                        </td>
+                        <td className="td font-mono text-xs">{r.salesorder_number || `#${r.referral_id}`}</td>
+                        <td className="td text-xs text-gray-500 whitespace-nowrap">{fmtDate(r.date)}</td>
+                        <td className="td text-xs max-w-[140px] truncate" title={affLabel(r)}>
+                          {r.affiliate_id ? (
+                            <a href={`/affiliates/${r.affiliate_id}`} className="text-navy-500 hover:underline">
+                              {affLabel(r)}
+                            </a>
+                          ) : affLabel(r)}
+                        </td>
+                        <td className="td font-mono text-xs">{r.coupon_code || '—'}</td>
+                        <td className="td font-mono text-xs">{r.reference || '—'}</td>
+                        <td className="td font-semibold text-sm whitespace-nowrap">{fmt(r.amount)}</td>
+                        <td className="td"><StatusBadge status={r.status} /></td>
+                        <td className="td">
+                          <div className="flex items-center gap-0.5">
+                            {r.status !== 'paid' && (
                               <button className="btn-ghost text-green-700 text-xs py-0.5 px-1.5"
-                                onClick={() => updateOne(r.referral_id, 'unpaid')}>✓</button>
-                              <button className="btn-ghost text-red-600 text-xs py-0.5 px-1.5"
-                                onClick={() => updateOne(r.referral_id, 'rejected')}>✗</button>
-                            </>
-                          )}
-                          <button className="btn-ghost text-red-400 text-xs py-0.5 px-1.5"
-                            onClick={() => deleteOne(r.referral_id)}>🗑</button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))
+                                onClick={() => updateOne(r, 'paid')}>Pay</button>
+                            )}
+                            {r.status === 'paid' && (
+                              <button className="btn-ghost text-xs py-0.5 px-1.5 text-gray-500"
+                                onClick={() => updateOne(r, 'unpaid')}>Undo</button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })
               }
             </tbody>
           </table>
         </div>
 
-        {/* Pagination */}
         <div className="flex items-center justify-between mt-3 text-sm text-gray-500">
-          <span>Showing {referrals.length} records (offset {offset})</span>
+          <span>
+            Page {page} of {pages} · {total} total
+            {openTotal > 0 && status !== 'paid' ? ` · ${fmt(openTotal)} on this page open` : ''}
+          </span>
           <div className="flex gap-2">
             <button className="btn-outline" onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))} disabled={offset === 0}>
               <ChevronLeft size={14} /> Previous
             </button>
-            <button className="btn-outline" onClick={() => setOffset(offset + PAGE_SIZE)} disabled={referrals.length < PAGE_SIZE}>
+            <button className="btn-outline" onClick={() => setOffset(offset + PAGE_SIZE)} disabled={offset + PAGE_SIZE >= total}>
               Next <ChevronRight size={14} />
             </button>
           </div>

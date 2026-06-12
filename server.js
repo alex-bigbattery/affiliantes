@@ -20,6 +20,13 @@ import { refreshWcOrder, refreshWcOrdersBulk, wooConfigured as wooUpdateConfigur
 import { runCouponMapSync } from './couponMapSync.js'
 import { registerZohoPriceHistory } from './zohoPriceHistory.js'
 import { registerTaxEstimate } from './taxEstimate.js'
+import { syncOrderCommissions, orderCommissionsMonthly, queryOrderCommissions, updateCommissionStatus, commissionStatsSummary, mapCommissionRow } from './orderCommissionsSync.js'
+import {
+  normalizeDateParam,
+  toIsoDateOnly,
+  orderDateFromClause,
+  orderDateToClause,
+} from './dateUtils.js'
 import { authConfigured, requireAuth, registerAuthRoutes } from './auth.js'
 import { awpRequest, awpUpdateReferral, awpDeleteReferral, syncReferralRow, awpConfigured } from './affwpClient.js'
 
@@ -53,7 +60,11 @@ app.use(cors({
 app.use(express.json())
 
 // Health check (used by Render)
-app.get('/api/health', (_req, res) => res.json({ ok: true, ts: Date.now() }))
+app.get('/api/health', (_req, res) => res.json({
+  ok: true,
+  ts: Date.now(),
+  woo_configured: !!(process.env.WOO_CONSUMER_KEY && process.env.WOO_CONSUMER_SECRET),
+}))
 
 // Auth routes + JWT protection for /api/*
 registerAuthRoutes(app)
@@ -77,23 +88,6 @@ registerTaxEstimate(app, { normalizeDateParam })
 // (Removed duplicate legacy axios-based `awp` — the awpRequest wrapper above is
 //  the single definition. The old one referenced an undefined AUTH and caused a
 //  duplicate-declaration SyntaxError that prevented the server from booting.)
-
-/** Accept ISO (YYYY-MM-DD) or US (M/D/YYYY, MM/DD/YYYY) for order_date filters. */
-function normalizeDateParam(raw) {
-  if (raw == null || raw === '') return null
-  const t = String(raw).trim()
-  if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t
-  const us = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
-  if (us) {
-    const [, m, d, y] = us
-    return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`
-  }
-  const parsed = new Date(t)
-  if (!Number.isNaN(parsed.getTime())) {
-    return parsed.toISOString().slice(0, 10)
-  }
-  return null
-}
 
 function handle(fn) {
   return async (req, res) => {
@@ -147,6 +141,29 @@ app.post('/api/sync/woo/sales-orders/backfill', handle(async (req) => {
 app.post('/api/sync/coupon-map/run', handle(async () => {
   couponCache = null
   return runCouponMapSync()
+}))
+
+app.post('/api/commissions/from-orders/sync', handle(async () => syncOrderCommissions()))
+
+app.get('/api/commissions/from-orders', handle(async req => {
+  const months = Math.min(Math.max(parseInt(req.query.months, 10) || 12, 1), 36)
+  const result = await queryOrderCommissions({
+    number: req.query.number || 5000,
+    offset: req.query.offset || 0,
+    status: req.query.status,
+    affiliate_id: req.query.affiliate_id,
+    date: req.query.date || req.query.date_from,
+    end_date: req.query.end_date || req.query.date_to,
+    reference: req.query.reference || req.query.search,
+    orderby: req.query.orderby || 'date',
+    order: req.query.order,
+  })
+  return { ...result, monthly: await orderCommissionsMonthly(months) }
+}))
+
+app.put('/api/commissions/:salesorder_number/status', handle(async req => {
+  const status = req.body?.status || req.body?.payout_status
+  return updateCommissionStatus(req.params.salesorder_number, status)
 }))
 
 app.get('/api/woocommerce/coupons', handle(async req => {
@@ -219,35 +236,56 @@ app.delete('/api/affiliates/:id', handle(async req => {
   return result
 }))
 
-// ── REFERRALS (read from Supabase) ──────────────────────────────────────────
+// ── REFERRALS (Supabase order_commissions — complete by order date) ─────────
 app.get('/api/referrals', handle(async req => {
-  const { number = 50, offset = 0, status, affiliate_id, date, end_date, reference, orderby = 'date', order = 'DESC' } = req.query
-  const vals = []
-  const clauses = []
-  if (status)       { vals.push(status);       clauses.push(`status = $${vals.length}`) }
-  if (affiliate_id) { vals.push(affiliate_id); clauses.push(`affiliate_id = $${vals.length}`) }
-  if (reference)    { vals.push(`%${reference}%`); clauses.push(`reference ILIKE $${vals.length}`) }
-  if (date)         { vals.push(date);         clauses.push(`date >= $${vals.length}`) }
-  if (end_date)     { vals.push(end_date);     clauses.push(`date <= $${vals.length}`) }
-
-  const safeOrder = order?.toUpperCase() === 'ASC' ? 'ASC' : 'DESC'
-  const safeOrderby = ['referral_id','date','amount','affiliate_id','status'].includes(orderby) ? orderby : 'date'
-  let q = `SELECT * FROM awp_referrals`
-  if (clauses.length) q += ' WHERE ' + clauses.join(' AND ')
-  q += ` ORDER BY ${safeOrderby} ${safeOrder} LIMIT $${vals.push(number)} OFFSET $${vals.push(offset)}`
-  const { rows } = await pool.query(q, vals)
-  return rows
+  const fetchAll = req.query.number === 'all' || req.query.number === '0'
+  const result = await queryOrderCommissions({
+    number: fetchAll ? 10000 : req.query.number,
+    offset: req.query.offset,
+    status: req.query.status,
+    affiliate_id: req.query.affiliate_id,
+    date: req.query.date || req.query.date_from,
+    end_date: req.query.end_date || req.query.date_to,
+    reference: req.query.reference || req.query.search,
+    orderby: req.query.orderby,
+    order: req.query.order,
+  })
+  return result
 }))
 
 app.get('/api/referrals/:id', handle(async req => {
-  const { rows } = await pool.query(`SELECT * FROM awp_referrals WHERE referral_id=$1`, [req.params.id])
-  if (!rows.length) return awp('GET', `/referrals/${req.params.id}`)
-  return rows[0]
+  const id = req.params.id
+  const bySo = await pool.query(`SELECT * FROM order_commissions WHERE salesorder_number = $1`, [id])
+  if (bySo.rows.length) return mapCommissionRow(bySo.rows[0])
+  const numId = parseInt(id, 10)
+  if (Number.isFinite(numId)) {
+    const byRef = await pool.query(`SELECT * FROM order_commissions WHERE awp_referral_id = $1`, [numId])
+    if (byRef.rows.length) return mapCommissionRow(byRef.rows[0])
+    const { rows } = await pool.query(`SELECT * FROM awp_referrals WHERE referral_id=$1`, [numId])
+    if (rows.length) return rows[0]
+    return awp('GET', `/referrals/${id}`)
+  }
+  const err = new Error('Referral not found')
+  err.status = 404
+  throw err
 }))
 
 app.put('/api/referrals/:id', handle(async req => {
-  const result = await awpUpdateReferral(req.params.id, req.body)
+  const id = req.params.id
+  const bySo = await pool.query(`SELECT * FROM order_commissions WHERE salesorder_number = $1`, [id])
+  if (bySo.rows.length && !bySo.rows[0].awp_referral_id) {
+    const status = req.body?.status
+    if (status) return updateCommissionStatus(id, status)
+  }
+  const numId = parseInt(id, 10)
+  if (!Number.isFinite(numId)) {
+    const err = new Error('Invalid referral id')
+    err.status = 400
+    throw err
+  }
+  const result = await awpUpdateReferral(numId, req.body)
   await syncReferralRow(pool, result)
+  await syncOrderCommissions()
   return result
 }))
 
@@ -264,25 +302,40 @@ app.post('/api/referrals/bulk', handle(async req => {
     err.status = 400
     throw err
   }
+  const wpIds = []
+  const localIds = []
+  for (const id of ids) {
+    const n = parseInt(id, 10)
+    if (Number.isFinite(n) && String(n) === String(id)) wpIds.push(n)
+    else localIds.push(String(id))
+  }
+  let localUpdated = 0
+  for (const so of localIds) {
+    try {
+      await updateCommissionStatus(so, status)
+      localUpdated++
+    } catch { /* skip */ }
+  }
   const results = await Promise.allSettled(
-    ids.map(id => awpUpdateReferral(id, { status })),
+    wpIds.map(id => awpUpdateReferral(id, { status })),
   )
   const succeeded = []
   const errors = []
   for (let i = 0; i < results.length; i++) {
     if (results[i].status === 'fulfilled') {
-      succeeded.push(ids[i])
+      succeeded.push(wpIds[i])
       await syncReferralRow(pool, results[i].value)
     } else {
-      errors.push({ id: ids[i], error: results[i].reason?.message || String(results[i].reason) })
+      errors.push({ id: wpIds[i], error: results[i].reason?.message || String(results[i].reason) })
     }
   }
-  if (!succeeded.length && errors.length) {
+  if (succeeded.length) await syncOrderCommissions()
+  if (!succeeded.length && !localUpdated && errors.length) {
     const err = new Error(errors[0].error)
     err.status = 502
     throw err
   }
-  return { updated: succeeded.length, failed: errors.length, errors }
+  return { updated: succeeded.length + localUpdated, failed: errors.length, errors }
 }))
 
 // ── PAYOUTS (read from Supabase) ─────────────────────────────────────────────
@@ -325,6 +378,7 @@ app.delete('/api/payouts/:id', handle(async req => {
 // ── VISITS (read from Supabase) ──────────────────────────────────────────────
 app.get('/api/visits', handle(async req => {
   const { number = 50, offset = 0, affiliate_id, date, end_date } = req.query
+  const fetchAll = number === 'all' || number === '0' || Number(number) === 0
   const vals = []
   const clauses = []
   if (affiliate_id) { vals.push(affiliate_id); clauses.push(`affiliate_id = $${vals.length}`) }
@@ -332,7 +386,10 @@ app.get('/api/visits', handle(async req => {
   if (end_date)     { vals.push(end_date);     clauses.push(`date <= $${vals.length}`) }
   let q = `SELECT * FROM awp_visits`
   if (clauses.length) q += ' WHERE ' + clauses.join(' AND ')
-  q += ` ORDER BY date DESC LIMIT $${vals.push(number)} OFFSET $${vals.push(offset)}`
+  q += ` ORDER BY date DESC`
+  if (!fetchAll) {
+    q += ` LIMIT $${vals.push(Math.max(1, Number(number) || 50))} OFFSET $${vals.push(Math.max(0, Number(offset) || 0))}`
+  }
   const { rows } = await pool.query(q, vals)
   return rows
 }))
@@ -401,7 +458,7 @@ function presentWcOnlyOrder(row) {
   return enrichRefundFields({
     salesorder_id: `wc-${row.order_id}`,
     salesorder_number: row.order_number,
-    order_date: row.date_created ? String(row.date_created).slice(0, 10) : null,
+    order_date: toIsoDateOnly(row.date_created),
     order_datetime: row.date_created,
     reference_number: null,
     customer_name: row.customer_name,
@@ -621,12 +678,12 @@ app.get('/api/orders', handle(async req => {
   const fromDate = normalizeDateParam(date_from)
   if (fromDate) {
     vals.push(fromDate)
-    clauses.push(`o.order_date::date >= $${vals.length}::date`)
+    clauses.push(orderDateFromClause('o', `$${vals.length}`))
   }
   const toDate = normalizeDateParam(date_to)
   if (toDate) {
     vals.push(toDate)
-    clauses.push(`o.order_date::date <= $${vals.length}::date`)
+    clauses.push(orderDateToClause('o', `$${vals.length}`))
   }
   if (has_coupon === 'true') {
     clauses.push(`o.coupon_code IS NOT NULL`)
@@ -1064,7 +1121,7 @@ app.delete('/api/materials/:id', handle(async req => {
 
 // ── STATS (pure SQL — instant, no API calls) ─────────────────────────────────
 app.get('/api/stats', handle(async () => {
-  const [agg, monthly, topAff, payAgg] = await Promise.all([
+  const [agg, topAff, payAgg] = await Promise.all([
     pool.query(`
       SELECT
         COUNT(*)                                     AS total,
@@ -1077,25 +1134,13 @@ app.get('/api/stats', handle(async () => {
       FROM awp_affiliates
     `),
     pool.query(`
-      SELECT
-        TO_CHAR(date,'YYYY-MM')          AS month,
-        COUNT(*)                          AS count,
-        COALESCE(SUM(amount),0)           AS amount,
-        COALESCE(SUM(amount) FILTER (WHERE status='paid'),0)   AS paid,
-        COALESCE(SUM(amount) FILTER (WHERE status='unpaid'),0) AS unpaid
-      FROM awp_referrals
-      WHERE date >= NOW() - INTERVAL '12 months'
-      GROUP BY month ORDER BY month
-    `),
-    pool.query(`
-      SELECT r.affiliate_id,
-        COALESCE(a.display_name, a.username, a.payment_email, r.affiliate_id::text) AS name,
-        COALESCE(SUM(r.amount),0)  AS total,
-        COALESCE(SUM(r.amount) FILTER (WHERE r.status='unpaid'),0) AS unpaid,
-        COUNT(*)                    AS count
-      FROM awp_referrals r
-      LEFT JOIN awp_affiliates a ON a.affiliate_id = r.affiliate_id
-      GROUP BY r.affiliate_id, a.display_name, a.username, a.payment_email
+      SELECT affiliate_id,
+        COALESCE(affiliate_name, affiliate_id::text) AS name,
+        COALESCE(SUM(commission_amount),0)  AS total,
+        COALESCE(SUM(commission_amount) FILTER (WHERE payout_status <> 'paid'),0) AS unpaid,
+        COUNT(*)::int AS count
+      FROM order_commissions
+      GROUP BY affiliate_id, affiliate_name
       ORDER BY total DESC LIMIT 10
     `),
     pool.query(`
@@ -1106,25 +1151,8 @@ app.get('/api/stats', handle(async () => {
   const a = agg.rows[0]
   const pa = payAgg.rows[0]
 
-  const monthlyMap = {}
-  for (const r of monthly.rows) {
-    monthlyMap[r.month] = {
-      count:  parseInt(r.count),
-      amount: parseFloat(r.amount),
-      paid:   parseFloat(r.paid),
-      unpaid: parseFloat(r.unpaid),
-    }
-  }
-
-  const refCounts = await pool.query(`
-    SELECT
-      COUNT(*) FILTER (WHERE status='paid')     AS paid,
-      COUNT(*) FILTER (WHERE status='unpaid')   AS unpaid,
-      COUNT(*) FILTER (WHERE status='pending')  AS pending,
-      COUNT(*) FILTER (WHERE status='rejected') AS rejected
-    FROM awp_referrals
-  `)
-  const rc = refCounts.rows[0]
+  const monthlyMap = await orderCommissionsMonthly(12)
+  const rc = await commissionStatsSummary()
 
   return {
     affiliates: {
@@ -1132,23 +1160,25 @@ app.get('/api/stats', handle(async () => {
       active:         parseInt(a.active),
       inactive:       parseInt(a.inactive),
       pending:        parseInt(a.pending),
-      total_earnings: parseFloat(a.total_earnings),
-      total_unpaid:   parseFloat(a.total_unpaid),
+      total_earnings: parseFloat(rc.total_amount),
+      total_unpaid:   parseFloat(rc.amount_open),
     },
     referrals: {
-      total:         parseInt(a.total_referrals),
-      paid:          parseInt(rc.paid),
-      unpaid:        parseInt(rc.unpaid),
-      pending:       parseInt(rc.pending),
-      rejected:      parseInt(rc.rejected),
-      amount_paid:   parseFloat(a.total_earnings) - parseFloat(a.total_unpaid),
-      amount_unpaid: parseFloat(a.total_unpaid),
+      total:         rc.total,
+      paid:          rc.paid,
+      unpaid:        rc.unpaid,
+      pending:       rc.pending,
+      estimated:     rc.estimated,
+      rejected:      rc.rejected,
+      amount_paid:   parseFloat(rc.amount_paid),
+      amount_unpaid: parseFloat(rc.amount_open),
     },
     payouts: {
       total:  parseInt(pa.total),
       amount: parseFloat(pa.amount),
     },
     monthly: monthlyMap,
+    monthly_source: 'order_commissions',
     by_affiliate: topAff.rows.map(r => ({
       affiliate_id: r.affiliate_id,
       name:   r.name,
@@ -1174,6 +1204,7 @@ if (fs.existsSync(distDir)) {
 async function runScheduledSyncs() {
   await runSync().catch(console.error)
   await runWooSync().catch(console.error)
+  await syncOrderCommissions().catch(console.error)
 }
 
 async function start() {
@@ -1182,6 +1213,9 @@ async function start() {
   console.log(`\n  ⚡ Affiliate Dashboard API → http://localhost:${PORT}\n`)
 
   await initTables()
+
+  console.log('  📊 Syncing order commissions (Supabase ledger from orders)...')
+  await syncOrderCommissions().catch(e => console.warn('  order_commissions sync:', e.message))
 
   console.log('  🔄 Running initial sync...')
   await runScheduledSyncs()
