@@ -1,106 +1,16 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// Sales Tax Estimator — FREE estimate using static US state AVERAGE rates.
-// ─────────────────────────────────────────────────────────────────────────────
+// Sales Tax Estimator — multi-provider + Supabase overrides
 
 import { pool } from './db.js'
+import {
+  STATE_RATES, normalizeUsState, round2, num,
+  extractShippingAddress,
+} from './taxShared.js'
+import {
+  TAX_PROVIDERS, PROVIDER_LABELS,
+  computeOrderTax, computeStateAvg,
+} from './taxProviders.js'
 
-export const STATE_RATES = {
-  AL: 0.0925, AK: 0.0176, AZ: 0.0837, AR: 0.0945, CA: 0.0857, CO: 0.0777,
-  CT: 0.0635, DE: 0.0000, FL: 0.0700, GA: 0.0735, HI: 0.0444, ID: 0.0603,
-  IL: 0.0873, IN: 0.0700, IA: 0.0694, KS: 0.0869, KY: 0.0600, LA: 0.0955,
-  ME: 0.0550, MD: 0.0600, MA: 0.0625, MI: 0.0600, MN: 0.0746, MS: 0.0707,
-  MO: 0.0836, MT: 0.0000, NE: 0.0697, NV: 0.0823, NH: 0.0000, NJ: 0.0660,
-  NM: 0.0762, NY: 0.0852, NC: 0.0698, ND: 0.0704, OH: 0.0723, OK: 0.0899,
-  OR: 0.0000, PA: 0.0634, RI: 0.0700, SC: 0.0744, SD: 0.0611, TN: 0.0955,
-  TX: 0.0820, UT: 0.0719, VT: 0.0624, VA: 0.0577, WA: 0.0938, WV: 0.0655,
-  WI: 0.0543, WY: 0.0544, DC: 0.0600,
-}
-
-const STATE_NAMES = {
-  alabama: 'AL', alaska: 'AK', arizona: 'AZ', arkansas: 'AR', california: 'CA',
-  colorado: 'CO', connecticut: 'CT', delaware: 'DE', florida: 'FL', georgia: 'GA',
-  hawaii: 'HI', idaho: 'ID', illinois: 'IL', indiana: 'IN', iowa: 'IA',
-  kansas: 'KS', kentucky: 'KY', louisiana: 'LA', maine: 'ME', maryland: 'MD',
-  massachusetts: 'MA', michigan: 'MI', minnesota: 'MN', mississippi: 'MS',
-  missouri: 'MO', montana: 'MT', nebraska: 'NE', nevada: 'NV',
-  'new hampshire': 'NH', 'new jersey': 'NJ', 'new mexico': 'NM', 'new york': 'NY',
-  'north carolina': 'NC', 'north dakota': 'ND', ohio: 'OH', oklahoma: 'OK',
-  oregon: 'OR', pennsylvania: 'PA', 'rhode island': 'RI', 'south carolina': 'SC',
-  'south dakota': 'SD', tennessee: 'TN', texas: 'TX', utah: 'UT', vermont: 'VT',
-  virginia: 'VA', washington: 'WA', 'west virginia': 'WV', wisconsin: 'WI',
-  wyoming: 'WY', 'district of columbia': 'DC', 'washington dc': 'DC',
-}
-
-export const round2 = n => Math.round((Number(n) + Number.EPSILON) * 100) / 100
-export const num = v => { const n = Number(v); return Number.isFinite(n) && n >= 0 ? n : 0 }
-
-export function normalizeUsState(raw) {
-  if (!raw) return ''
-  const t = String(raw).trim()
-  if (!t) return ''
-  const up = t.toUpperCase()
-  if (up.length === 2 && up in STATE_RATES) return up
-  const code = STATE_NAMES[t.toLowerCase()]
-  if (code) return code
-  if (up.length === 2) return up
-  return ''
-}
-
-export function parseJson(val) {
-  if (!val) return null
-  if (typeof val === 'object') return val
-  try { return JSON.parse(val) } catch { return null }
-}
-
-export function extractShippingAddress(zohoRaw, wcRaw) {
-  const z = parseJson(zohoRaw) || {}
-  const w = parseJson(wcRaw) || {}
-  const ship = z.shipping_address || {}
-  const bill = z.billing_address || {}
-  const wcShip = w.shipping || {}
-  const wcBill = w.billing || {}
-
-  const line1 = String(ship.address || ship.street || wcShip.address_1 || wcBill.address_1 || '').trim()
-  const city = String(ship.city || wcShip.city || bill.city || '').trim()
-  const zip = String(ship.zip || ship.zipcode || ship.postal_code || wcShip.postcode || '').trim()
-  const county = String(ship.county || '').trim()
-  const state = normalizeUsState(
-    ship.state || ship.state_code || wcShip.state || bill.state || wcBill.state,
-  )
-
-  return { line1, city, state, postal_code: zip, county, country: 'US' }
-}
-
-export function computeTaxEstimate({ state, subtotal, shipping = 0, exempt = false }) {
-  const st = normalizeUsState(state)
-  const sub = num(subtotal)
-  const ship = num(shipping)
-  if (!st) return { error: 'missing_state', state: '', subtotal: round2(sub), shipping: round2(ship) }
-  if (!(st in STATE_RATES)) return { error: 'unknown_state', state: st, subtotal: round2(sub), shipping: round2(ship) }
-  if (sub <= 0) return { error: 'invalid_subtotal', state: st, subtotal: 0, shipping: round2(ship) }
-
-  const rate = exempt ? 0 : STATE_RATES[st]
-  const taxableBase = sub
-  const tax = round2(taxableBase * rate)
-  const total = round2(sub + ship + tax)
-
-  return {
-    subtotal: round2(sub),
-    shipping: round2(ship),
-    taxable_base: round2(taxableBase),
-    state: st,
-    rate,
-    rate_pct: round2(rate * 100),
-    tax,
-    total,
-    customer_type: exempt ? 'exempt' : 'retail',
-    source: 'free_state_avg_rate_table',
-    is_estimate: true,
-    note: exempt
-      ? 'Tax-exempt customer — $0 tax applied.'
-      : 'Estimated tax using the state AVERAGE combined rate. Real tax varies by city/ZIP/special district and product taxability.',
-  }
-}
+export { STATE_RATES, normalizeUsState, round2, num, extractShippingAddress }
 
 const SHIP_STATE_SQL = `
   UPPER(TRIM(COALESCE(
@@ -112,30 +22,183 @@ const SHIP_STATE_SQL = `
   )))
 `
 
+function parseProvider(raw) {
+  const p = String(raw || 'state_avg').toLowerCase()
+  return TAX_PROVIDERS.includes(p) ? p : 'state_avg'
+}
+
+async function loadOverrides(numbers) {
+  if (!numbers?.length) return new Map()
+  const { rows } = await pool.query(`
+    SELECT salesorder_number, rate, tax_amount, provider, notes, updated_by, updated_at
+    FROM sales_tax_overrides
+    WHERE salesorder_number = ANY($1)
+  `, [numbers])
+  return new Map(rows.map(r => [r.salesorder_number, r]))
+}
+
+function taxPayload(result) {
+  if (result.error) return null
+  return {
+    state: result.state,
+    rate_pct: result.rate_pct,
+    tax: result.tax,
+    total_with_tax: result.total,
+    is_estimate: result.is_estimate,
+    source: result.source,
+    override: !!result.override,
+    note: result.note || null,
+    breakdown: result.breakdown || null,
+    provider_error: result.provider_error || null,
+  }
+}
+
+async function mapOrderTax(row, { provider, overrides, cache, useOverrides }) {
+  const shipping_address = extractShippingAddress(row.raw_json, row.wc_raw)
+  const subtotal = num(row.sub_total)
+  const shipping = num(row.shipping_charge)
+  const override = useOverrides ? overrides.get(row.salesorder_number) : null
+
+  const taxResult = await computeOrderTax({
+    provider,
+    address: shipping_address,
+    subtotal,
+    shipping,
+    override,
+    cache,
+  })
+
+  return {
+    salesorder_id: row.salesorder_id,
+    salesorder_number: row.salesorder_number,
+    order_date: row.order_date ? String(row.order_date).slice(0, 10) : null,
+    customer_name: row.customer_name,
+    status: row.status,
+    sub_total: round2(subtotal),
+    shipping_charge: round2(shipping),
+    order_total: round2(num(row.total)),
+    shipping_address,
+    ship_state_raw: row.ship_state_raw || null,
+    has_override: overrides.has(row.salesorder_number),
+    tax: taxPayload(taxResult),
+    tax_error: taxResult.error || null,
+  }
+}
+
 export function registerTaxEstimate(app, { normalizeDateParam } = {}) {
+  app.get('/api/tax/providers', (_req, res) => {
+    res.json({
+      providers: TAX_PROVIDERS.map(id => ({
+        id,
+        label: PROVIDER_LABELS[id],
+        configured: id === 'state_avg' || id === 'salestaxzip'
+          || (id === 'ziptax' && !!process.env.ZIPTAX_API_KEY)
+          || (id === 'taxlocus' && !!process.env.TAXLOCUS_API_KEY),
+      })),
+    })
+  })
+
   app.get('/api/tax/states', (_req, res) => {
     res.json({ states: Object.keys(STATE_RATES).sort() })
   })
 
-  app.post('/api/tax/estimate', (req, res) => {
+  app.get('/api/tax/overrides', async (req, res) => {
+    try {
+      const { rows } = await pool.query(`
+        SELECT salesorder_number, rate, tax_amount, provider, notes, updated_by, updated_at
+        FROM sales_tax_overrides
+        ORDER BY updated_at DESC
+        LIMIT 5000
+      `)
+      res.json({ items: rows })
+    } catch (e) {
+      res.status(500).json({ error: e.message || String(e) })
+    }
+  })
+
+  app.put('/api/tax/overrides/:salesorder_number', async (req, res) => {
+    try {
+      const salesorder_number = String(req.params.salesorder_number || '').trim()
+      if (!salesorder_number) return res.status(400).json({ error: 'salesorder_number required' })
+
+      const ratePct = req.body?.rate_pct != null ? Number(req.body.rate_pct) : null
+      const rateRaw = req.body?.rate != null ? Number(req.body.rate) : null
+      let rate = rateRaw
+      if (ratePct != null && Number.isFinite(ratePct)) rate = ratePct / 100
+      if (!Number.isFinite(rate) || rate < 0 || rate > 1) {
+        return res.status(400).json({ error: 'rate_pct (0–100) or rate (0–1) required' })
+      }
+
+      const tax_amount = req.body?.tax_amount != null ? round2(Number(req.body.tax_amount)) : null
+      const notes = req.body?.notes != null ? String(req.body.notes).trim() : null
+      const provider = parseProvider(req.body?.provider || 'state_avg')
+      const updated_by = req.authUser?.email || null
+
+      const { rows: [row] } = await pool.query(`
+        INSERT INTO sales_tax_overrides (salesorder_number, rate, tax_amount, provider, notes, updated_by, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, NOW())
+        ON CONFLICT (salesorder_number) DO UPDATE SET
+          rate = EXCLUDED.rate,
+          tax_amount = EXCLUDED.tax_amount,
+          provider = EXCLUDED.provider,
+          notes = EXCLUDED.notes,
+          updated_by = EXCLUDED.updated_by,
+          updated_at = NOW()
+        RETURNING *
+      `, [salesorder_number, rate, tax_amount, provider, notes, updated_by])
+
+      res.json(row)
+    } catch (e) {
+      res.status(500).json({ error: e.message || String(e) })
+    }
+  })
+
+  app.delete('/api/tax/overrides/:salesorder_number', async (req, res) => {
+    try {
+      const salesorder_number = String(req.params.salesorder_number || '').trim()
+      await pool.query(`DELETE FROM sales_tax_overrides WHERE salesorder_number = $1`, [salesorder_number])
+      res.json({ ok: true })
+    } catch (e) {
+      res.status(500).json({ error: e.message || String(e) })
+    }
+  })
+
+  app.post('/api/tax/estimate', async (req, res) => {
     try {
       const b = req.body || {}
       const addr = b.shipping_address || {}
       const exempt = String(b.customer_type || '').toLowerCase() === 'exempt'
-      const result = computeTaxEstimate({
-        state: addr.state,
+      const provider = parseProvider(b.provider)
+
+      if (provider === 'state_avg' && exempt) {
+        const r = computeStateAvg({
+          state: addr.state,
+          subtotal: b.subtotal,
+          shipping: b.shipping_amount,
+          exempt: true,
+        })
+        return res.json(r)
+      }
+
+      const result = await computeOrderTax({
+        provider,
+        address: addr,
         subtotal: b.subtotal,
         shipping: b.shipping_amount,
-        exempt,
+        cache: new Map(),
       })
+
       if (result.error === 'missing_state') {
-        return res.status(400).json({ error: 'shipping_address.state is required (2-letter US state)' })
+        return res.status(400).json({ error: 'shipping_address.state or postal_code is required' })
       }
       if (result.error === 'unknown_state') {
         return res.status(400).json({ error: `Unknown US state: ${result.state}` })
       }
       if (result.error === 'invalid_subtotal') {
         return res.status(400).json({ error: 'subtotal must be a positive number' })
+      }
+      if (result.error && !result.tax) {
+        return res.status(502).json({ error: result.error, provider, source: result.source })
       }
       res.json(result)
     } catch (e) {
@@ -148,8 +211,10 @@ export function registerTaxEstimate(app, { normalizeDateParam } = {}) {
       const {
         number: numberRaw = 'all', offset: offsetRaw = 0, search, status, ship_state,
         date_from, date_to, has_state, order = 'DESC',
+        provider: providerRaw = 'state_avg',
       } = req.query
 
+      const provider = parseProvider(providerRaw)
       const fetchAll = numberRaw === 'all' || numberRaw === '0' || Number(numberRaw) === 0
       const offset = fetchAll ? 0 : Math.max(0, Number(offsetRaw) || 0)
       const number = fetchAll ? null : Math.min(Math.max(1, Number(numberRaw) || 50), 5000)
@@ -190,9 +255,7 @@ export function registerTaxEstimate(app, { normalizeDateParam } = {}) {
 
       const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''
       const sortDir = String(order).toUpperCase() === 'ASC' ? 'ASC' : 'DESC'
-      const limitClause = fetchAll
-        ? ''
-        : `LIMIT $${vals.length + 1} OFFSET $${vals.length + 2}`
+      const limitClause = fetchAll ? '' : `LIMIT $${vals.length + 1} OFFSET $${vals.length + 2}`
       const pageVals = fetchAll ? vals : [...vals, number, offset]
 
       const [{ rows }, { rows: [countRow] }] = await Promise.all([
@@ -223,6 +286,16 @@ export function registerTaxEstimate(app, { normalizeDateParam } = {}) {
         `, vals),
       ])
 
+      const orderNumbers = rows.map(r => r.salesorder_number).filter(Boolean)
+      const overrides = await loadOverrides(orderNumbers)
+      const cache = new Map()
+      const useOverrides = provider === 'state_avg'
+
+      const items = []
+      for (const row of rows) {
+        items.push(await mapOrderTax(row, { provider, overrides, cache, useOverrides }))
+      }
+
       let sumSubtotal = 0
       let sumShipping = 0
       let sumTax = 0
@@ -230,54 +303,24 @@ export function registerTaxEstimate(app, { normalizeDateParam } = {}) {
       let withState = 0
       let missingState = 0
 
-      const items = rows.map((row) => {
-        const shipping_address = extractShippingAddress(row.raw_json, row.wc_raw)
-        const subtotal = num(row.sub_total)
-        const shipping = num(row.shipping_charge)
-        const taxResult = shipping_address.state
-          ? computeTaxEstimate({ state: shipping_address.state, subtotal, shipping })
-          : { error: 'missing_state', subtotal: round2(subtotal), shipping: round2(shipping), tax: 0, total: round2(subtotal + shipping), rate_pct: 0, state: '' }
-
-        if (shipping_address.state) withState += 1
+      for (const item of items) {
+        if (item.shipping_address?.state) withState += 1
         else missingState += 1
-
-        if (!taxResult.error) {
-          sumSubtotal += taxResult.subtotal
-          sumShipping += taxResult.shipping
-          sumTax += taxResult.tax
-          sumTotal += taxResult.total
+        sumSubtotal += item.sub_total
+        sumShipping += item.shipping_charge
+        if (item.tax) {
+          sumTax += item.tax.tax
+          sumTotal += item.tax.total_with_tax
         } else {
-          sumSubtotal += subtotal
-          sumShipping += shipping
-          sumTotal += subtotal + shipping
+          sumTotal += item.sub_total + item.shipping_charge
         }
-
-        return {
-          salesorder_id: row.salesorder_id,
-          salesorder_number: row.salesorder_number,
-          order_date: row.order_date ? String(row.order_date).slice(0, 10) : null,
-          customer_name: row.customer_name,
-          status: row.status,
-          sub_total: round2(subtotal),
-          shipping_charge: round2(shipping),
-          order_total: round2(num(row.total)),
-          shipping_address,
-          ship_state_raw: row.ship_state_raw || null,
-          tax: taxResult.error ? null : {
-            state: taxResult.state,
-            rate_pct: taxResult.rate_pct,
-            tax: taxResult.tax,
-            total_with_tax: taxResult.total,
-            is_estimate: taxResult.is_estimate,
-            source: taxResult.source,
-          },
-          tax_error: taxResult.error || null,
-        }
-      })
+      }
 
       res.json({
         items,
         total: countRow.total,
+        provider,
+        provider_label: PROVIDER_LABELS[provider],
         summary: {
           orders_count: items.length,
           with_shipping_state: withState,
@@ -286,12 +329,17 @@ export function registerTaxEstimate(app, { normalizeDateParam } = {}) {
           total_shipping: round2(sumShipping),
           total_estimated_tax: round2(sumTax),
           total_with_tax: round2(sumTotal),
+          unique_rate_lookups: cache.size,
         },
-        source: 'free_state_avg_rate_table',
         is_estimate: true,
       })
     } catch (e) {
       res.status(500).json({ error: e.message || String(e) })
     }
   })
+}
+
+// Legacy export for tests
+export function computeTaxEstimate(opts) {
+  return computeStateAvg(opts)
 }

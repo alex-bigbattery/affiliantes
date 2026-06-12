@@ -183,6 +183,7 @@ export default function ZohoPriceHistory() {
   const [q, setQ]       = useState('')
   const [qApplied, setQApplied] = useState('')
   const [status, setStatus]     = useState('all')
+  const [changedInPeriod, setChangedInPeriod] = useState(false)
   const [limit, setLimit] = useState(250)
   const [offset, setOffset] = useState(0)
 
@@ -197,7 +198,7 @@ export default function ZohoPriceHistory() {
     return () => clearTimeout(t)
   }, [q])
 
-  useEffect(() => { setOffset(0) }, [tab, from, to, status, dailyView, limit])
+  useEffect(() => { setOffset(0) }, [tab, from, to, status, dailyView, limit, changedInPeriod])
 
   const params = useMemo(() => {
     const p = { from, to, limit, offset }
@@ -206,8 +207,9 @@ export default function ZohoPriceHistory() {
       if (status !== 'all') p.status = status
     }
     if (onlyChanges) p.onlyChanges = true
+    if (changedInPeriod) p.changedInPeriod = true
     return p
-  }, [tab, from, to, qApplied, status, onlyChanges, limit, offset])
+  }, [tab, from, to, qApplied, status, onlyChanges, changedInPeriod, limit, offset])
 
   const load = useCallback(() => {
     setLoading(true); setError(null)
@@ -232,6 +234,7 @@ export default function ZohoPriceHistory() {
       if (status !== 'all') p.status = status
     }
     if (onlyChanges) p.onlyChanges = true
+    if (changedInPeriod) p.changedInPeriod = true
     downloadApi(`/zoho-price-history/${tab}/export`, p, `zoho-price-history-${tab}.xlsx`).catch(e => setError(e.message))
   }
 
@@ -282,6 +285,17 @@ export default function ZohoPriceHistory() {
             <option value="inactive">Inactive only</option>
           </select>
         )}
+        {(tab === 'daily' || tab === 'snapshots') && (
+          <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              className="rounded border-gray-300"
+              checked={changedInPeriod}
+              onChange={e => setChangedInPeriod(e.target.checked)}
+            />
+            Changed price in period
+          </label>
+        )}
         {tab === 'daily' && (
           <div className="flex rounded-lg border border-gray-200 p-0.5 bg-gray-50">
             {DAILY_VIEWS.map(v => (
@@ -303,6 +317,12 @@ export default function ZohoPriceHistory() {
           {onlyChanges
             ? `${data.total.toLocaleString()} price change${data.total === 1 ? '' : 's'} in range — items with a stable rate are hidden.`
             : `${dailyGroups.length.toLocaleString()} item${dailyGroups.length === 1 ? '' : 's'}, ${data.total.toLocaleString()} day row${data.total === 1 ? '' : 's'} — grouped by SKU.`}
+          {changedInPeriod && ' Showing only SKUs with at least one rate change in the selected dates.'}
+        </p>
+      )}
+      {tab === 'snapshots' && !loading && changedInPeriod && (
+        <p className="px-4 sm:px-6 -mt-2 mb-3 text-xs text-gray-500">
+          Showing snapshots for SKUs that changed price at least once between {from} and {to}.
         </p>
       )}
 

@@ -135,6 +135,15 @@ function dailyQuery(f) {
   if (f.onlyChanges) {
     filters.push(`(d.prev_rate IS NULL OR d.rate IS DISTINCT FROM d.prev_rate)`)
   }
+  if (f.changedInPeriod) {
+    filters.push(`d.item_id IN (
+      SELECT h.item_id FROM item_price_history h
+      WHERE h.effective_from::date <= ${toD}::date
+        AND COALESCE(h.effective_to::date, ${toD}::date) >= ${fromD}::date
+      GROUP BY h.item_id
+      HAVING COUNT(DISTINCT h.rate) > 1
+    )`)
+  }
   const where = filters.length ? ` WHERE ${filters.join(' AND ')}` : ''
 
   const sql = `
@@ -166,9 +175,20 @@ function dailyQuery(f) {
 function snapshotsFromWhere(f) {
   const vals = []
   const p = v => { vals.push(v); return '$' + vals.length }
+  const fromD = p(f.from)
+  const toD = p(f.to)
   const where = [`s.captured_at >= ${p(f.winStart)}`, `s.captured_at <= ${p(f.winEnd)}`]
   if (f.q) { const qp = p(`%${f.q}%`); where.push(`(s.sku ILIKE ${qp} OR s.name ILIKE ${qp})`) }
   if (f.status) where.push(`s.status = ${p(f.status)}`)
+  if (f.changedInPeriod) {
+    where.push(`s.item_id IN (
+      SELECT h.item_id FROM item_price_history h
+      WHERE h.effective_from::date <= ${toD}::date
+        AND COALESCE(h.effective_to::date, ${toD}::date) >= ${fromD}::date
+      GROUP BY h.item_id
+      HAVING COUNT(DISTINCT h.rate) > 1
+    )`)
+  }
   return { sql: `FROM item_price_snapshots s WHERE ${where.join(' AND ')}`, vals }
 }
 
@@ -306,20 +326,22 @@ async function streamWorkbook(res, { subtab, sourceTable, cols, rows, truncated,
 
 // ── route registration (mounted once from server.js) ──────────────────────────
 export function registerZohoPriceHistory(app) {
-  const DAILY_PARAMS    = ['from', 'to', 'q', 'status', 'onlyChanges', 'limit', 'offset']
-  const SNAPSHOT_PARAMS = ['from', 'to', 'q', 'status', 'limit', 'offset']
+  const DAILY_PARAMS    = ['from', 'to', 'q', 'status', 'onlyChanges', 'changedInPeriod', 'limit', 'offset']
+  const SNAPSHOT_PARAMS = ['from', 'to', 'q', 'status', 'changedInPeriod', 'limit', 'offset']
   const RUN_PARAMS      = ['from', 'to', 'limit', 'offset']
-  const DAILY_EXPORT    = ['from', 'to', 'q', 'status', 'onlyChanges']
-  const SNAPSHOT_EXPORT = ['from', 'to', 'q', 'status']
+  const DAILY_EXPORT    = ['from', 'to', 'q', 'status', 'onlyChanges', 'changedInPeriod']
+  const SNAPSHOT_EXPORT = ['from', 'to', 'q', 'status', 'changedInPeriod']
   const RUN_EXPORT      = ['from', 'to']
 
   const dailyFilters = f => ([
     ['from', f.from], ['to', f.to], ['search (sku/name)', f.q || '(none)'],
     ['status', f.status || 'all'], ['only days with price change', f.onlyChanges ? 'yes' : 'no'],
+    ['only items with price change in period', f.changedInPeriod ? 'yes' : 'no'],
     ['granularity', 'one row per SKU per calendar day (from item_price_history)'],
   ])
   const snapshotFilters = f => ([
     ['from', f.from], ['to', f.to], ['search (sku/name)', f.q || '(none)'], ['status', f.status || 'all'],
+    ['only items with price change in period', f.changedInPeriod ? 'yes' : 'no'],
   ])
   const runFilters = f => ([['from', f.from], ['to', f.to]])
 
@@ -328,14 +350,14 @@ export function registerZohoPriceHistory(app) {
     rejectUnknown(req.query, DAILY_PARAMS)
     const { from, to } = parseRange(req.query)
     const { limit, offset } = parsePaging(req.query)
-    const f = { from, to, q: req.query.q?.trim() || '', status: parseStatus(req.query.status), onlyChanges: parseBool(req.query.onlyChanges), limit, offset }
+    const f = { from, to, q: req.query.q?.trim() || '', status: parseStatus(req.query.status), onlyChanges: parseBool(req.query.onlyChanges), changedInPeriod: parseBool(req.query.changedInPeriod), limit, offset }
     res.json(await dailyListQuery(f))
   }))
 
   app.get('/api/zoho-price-history/daily/export', wrap(async (req, res) => {
     rejectUnknown(req.query, DAILY_EXPORT)
     const { from, to } = parseRange(req.query)
-    const f = { from, to, q: req.query.q?.trim() || '', status: parseStatus(req.query.status), onlyChanges: parseBool(req.query.onlyChanges) }
+    const f = { from, to, q: req.query.q?.trim() || '', status: parseStatus(req.query.status), onlyChanges: parseBool(req.query.onlyChanges), changedInPeriod: parseBool(req.query.changedInPeriod) }
     const { rows, truncated } = await dailyExportRows(f)
     await streamWorkbook(res, { subtab: 'daily', sourceTable: 'item_price_history (expanded by day)', cols: DAILY_COLS, rows, truncated, filters: dailyFilters(f), from, to })
   }))
@@ -345,7 +367,7 @@ export function registerZohoPriceHistory(app) {
     rejectUnknown(req.query, DAILY_PARAMS)
     const { from, to } = parseRange(req.query)
     const { limit, offset } = parsePaging(req.query)
-    const f = { from, to, q: req.query.q?.trim() || '', status: parseStatus(req.query.status), onlyChanges: parseBool(req.query.onlyChanges), limit, offset }
+    const f = { from, to, q: req.query.q?.trim() || '', status: parseStatus(req.query.status), onlyChanges: parseBool(req.query.onlyChanges), changedInPeriod: parseBool(req.query.changedInPeriod), limit, offset }
     res.json(await dailyListQuery(f))
   }))
 
@@ -354,14 +376,14 @@ export function registerZohoPriceHistory(app) {
     rejectUnknown(req.query, SNAPSHOT_PARAMS)
     const { from, to, winStart, winEnd } = parseRange(req.query)
     const { limit, offset } = parsePaging(req.query)
-    const f = { from, to, winStart, winEnd, q: req.query.q?.trim() || '', status: parseStatus(req.query.status), limit, offset }
+    const f = { from, to, winStart, winEnd, q: req.query.q?.trim() || '', status: parseStatus(req.query.status), changedInPeriod: parseBool(req.query.changedInPeriod), limit, offset }
     res.json(await listQuery('snapshots', snapshotsFromWhere, f))
   }))
 
   app.get('/api/zoho-price-history/snapshots/export', wrap(async (req, res) => {
     rejectUnknown(req.query, SNAPSHOT_EXPORT)
     const { from, to, winStart, winEnd } = parseRange(req.query)
-    const f = { from, to, winStart, winEnd, q: req.query.q?.trim() || '', status: parseStatus(req.query.status) }
+    const f = { from, to, winStart, winEnd, q: req.query.q?.trim() || '', status: parseStatus(req.query.status), changedInPeriod: parseBool(req.query.changedInPeriod) }
     const { rows, truncated } = await exportRows('snapshots', snapshotsFromWhere, f)
     await streamWorkbook(res, { subtab: 'snapshots', sourceTable: 'item_price_snapshots', cols: SNAPSHOT_COLS, rows, truncated, filters: snapshotFilters(f), from, to })
   }))

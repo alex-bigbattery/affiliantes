@@ -195,6 +195,17 @@ export async function initTables() {
 
     CREATE UNIQUE INDEX IF NOT EXISTS idx_wc_orders_number ON wc_orders(order_number_norm);
     CREATE INDEX IF NOT EXISTS idx_wc_orders_status ON wc_orders(status);
+
+    -- Manual sales tax rate overrides (Sales Tax tab — stored in Supabase Postgres)
+    CREATE TABLE IF NOT EXISTS sales_tax_overrides (
+      salesorder_number TEXT PRIMARY KEY,
+      rate              NUMERIC(10,6) NOT NULL,
+      tax_amount        NUMERIC(12,2),
+      provider          TEXT NOT NULL DEFAULT 'state_avg',
+      notes             TEXT,
+      updated_by        TEXT,
+      updated_at        TIMESTAMPTZ DEFAULT NOW()
+    );
   `)
 
   await pool.query(`

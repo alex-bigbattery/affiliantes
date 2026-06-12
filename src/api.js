@@ -130,9 +130,12 @@ export const api = {
   zohoExportUrl: (kind, p) => apiUrl(`/zoho-price-history/${kind}/export`, p),
 
   // Sales Tax estimator
+  taxProviders: () => get('/tax/providers'),
   taxStates:   () => get('/tax/states'),
   taxEstimate: (d) => post('/tax/estimate', d),
   taxOrders:   (p) => get('/tax/orders', p),
+  taxSaveOverride: (orderNumber, d) => put(`/tax/overrides/${encodeURIComponent(orderNumber)}`, d),
+  taxClearOverride: (orderNumber) => del(`/tax/overrides/${encodeURIComponent(orderNumber)}`),
 
   completePasswordSetup: () => post('/auth/password-setup-complete'),
 }

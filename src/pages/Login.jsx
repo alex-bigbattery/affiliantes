@@ -79,8 +79,8 @@ export default function Login() {
             onChange={e => setRememberMeChecked(e.target.checked)}
           />
           <span>
-            Recordar usuario
-            <span className="text-gray-400"> — mantener la sesión activa en este equipo</span>
+            Remember me
+            <span className="text-gray-400"> — keep me signed in on this device</span>
           </span>
         </label>
         <AuthError>{error}</AuthError>
