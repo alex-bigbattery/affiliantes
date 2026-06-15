@@ -92,6 +92,33 @@ function parseItemFilters(query) {
   }
 }
 
+const ITEM_SORT_KEYS = ['qty_sold', 'modified', 'rate', 'sku']
+
+function parseItemSort(query) {
+  const sort = String(query.sort || 'qty_sold').toLowerCase()
+  const order = String(query.order || 'desc').toLowerCase()
+  if (!ITEM_SORT_KEYS.includes(sort)) {
+    throw new HttpError(400, `sort must be one of: ${ITEM_SORT_KEYS.join(', ')}`)
+  }
+  if (order !== 'asc' && order !== 'desc') {
+    throw new HttpError(400, "order must be 'asc' or 'desc'")
+  }
+  return { sort, order }
+}
+
+function itemsOrderBy(f) {
+  const dir = f.order === 'asc' ? 'ASC' : 'DESC'
+  const nulls = f.order === 'asc' ? 'NULLS FIRST' : 'NULLS LAST'
+  const expr = {
+    qty_sold: 'COALESCE(sales.qty_sold, 0)',
+    rate: 'i.rate',
+    sku: 'i.sku',
+    modified: zohoIsoDateExpr('i.last_modified_time'),
+  }[f.sort]
+  const tie = f.sort === 'sku' ? '' : ', i.sku ASC'
+  return ` ORDER BY ${expr} ${dir} ${nulls}${tie}`
+}
+
 function parseStatus(s) {
   if (s == null || s === '') return null
   const v = String(s).toLowerCase()
@@ -300,7 +327,7 @@ function itemsQueryBody(f) {
     ) sales ON UPPER(TRIM(i.sku)) = sales.sku_key
     WHERE ${where.join(' AND ')}`
 
-  return { sql, vals, orderBy: ` ORDER BY ${zohoIsoDateExpr('i.last_modified_time')} DESC NULLS LAST, i.sku ASC` }
+  return { sql, vals, orderBy: itemsOrderBy(f) }
 }
 
 const SELECT = {
@@ -454,11 +481,11 @@ export function registerZohoPriceHistory(app) {
   const DAILY_PARAMS    = ['from', 'to', 'q', 'status', 'onlyChanges', 'changedInPeriod', 'limit', 'offset']
   const SNAPSHOT_PARAMS = ['from', 'to', 'q', 'status', 'changedInPeriod', 'limit', 'offset']
   const RUN_PARAMS      = ['from', 'to', 'limit', 'offset']
-  const ITEM_PARAMS     = ['q', 'status', 'modFrom', 'modTo', 'soldFrom', 'soldTo', 'limit', 'offset']
+  const ITEM_PARAMS     = ['q', 'status', 'modFrom', 'modTo', 'soldFrom', 'soldTo', 'sort', 'order', 'limit', 'offset']
   const DAILY_EXPORT    = ['from', 'to', 'q', 'status', 'onlyChanges', 'changedInPeriod']
   const SNAPSHOT_EXPORT = ['from', 'to', 'q', 'status', 'changedInPeriod']
   const RUN_EXPORT      = ['from', 'to']
-  const ITEM_EXPORT     = ['q', 'status', 'modFrom', 'modTo', 'soldFrom', 'soldTo']
+  const ITEM_EXPORT     = ['q', 'status', 'modFrom', 'modTo', 'soldFrom', 'soldTo', 'sort', 'order']
 
   const dailyFilters = f => ([
     ['from', f.from], ['to', f.to], ['search (sku/name)', f.q || '(none)'],
@@ -479,6 +506,8 @@ export function registerZohoPriceHistory(app) {
     ['modified in Zoho from', f.modFrom || '(any)'],
     ['modified in Zoho to', f.modTo || '(any)'],
     ['qty sold source', 'sales_orders line_items (excludes void/cancelled/refunded)'],
+    ['sort', f.sort || 'qty_sold'],
+    ['order', f.order || 'desc'],
     ['source', 'items table (Zoho Books catalog sync)'],
   ])
 
@@ -545,13 +574,13 @@ export function registerZohoPriceHistory(app) {
   app.get('/api/zoho-price-history/items', wrap(async (req, res) => {
     rejectUnknown(req.query, ITEM_PARAMS)
     const { limit, offset } = parsePaging(req.query)
-    const f = { ...parseItemFilters(req.query), limit, offset }
+    const f = { ...parseItemFilters(req.query), ...parseItemSort(req.query), limit, offset }
     res.json(await itemsListQuery(f))
   }))
 
   app.get('/api/zoho-price-history/items/export', wrap(async (req, res) => {
     rejectUnknown(req.query, ITEM_EXPORT)
-    const f = parseItemFilters(req.query)
+    const f = { ...parseItemFilters(req.query), ...parseItemSort(req.query) }
     const { rows, truncated } = await itemsExportRows(f)
     const from = f.soldFrom || f.modFrom || 'all'
     const to = f.soldTo || f.modTo || 'all'

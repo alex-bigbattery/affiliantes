@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
-import { Search, Download, ChevronLeft, ChevronRight, Info, ArrowRight, Minus } from 'lucide-react'
+import { Search, Download, ChevronLeft, ChevronRight, Info, ArrowRight, Minus, ChevronUp, ChevronDown, ChevronsUpDown } from 'lucide-react'
 import { api, downloadApi, fmt, fmtDate } from '../api'
 import { PageHeader, Spinner, ErrorMsg, Empty } from '../components/Layout'
 
@@ -114,16 +114,45 @@ const RUN_COLS = [
 ]
 
 const ITEM_COLS = [
-  { h: 'Item', cell: r => <ItemCell sku={r.sku} name={r.name} />, wide: true },
-  { h: 'Rate', cell: r => <span className="text-sm font-medium">{fmt(r.rate)}</span>, right: true },
-  { h: 'Qty sold', cell: r => <span className="text-sm font-medium tabular-nums">{Number(r.qty_sold ?? 0).toLocaleString()}</span>, right: true },
+  { h: 'Item', sortKey: 'sku', cell: r => <ItemCell sku={r.sku} name={r.name} />, wide: true },
+  { h: 'Rate', sortKey: 'rate', cell: r => <span className="text-sm font-medium">{fmt(r.rate)}</span>, right: true },
+  { h: 'Qty sold', sortKey: 'qty_sold', cell: r => <span className="text-sm font-medium tabular-nums">{Number(r.qty_sold ?? 0).toLocaleString()}</span>, right: true },
   { h: 'Status', cell: r => (
       <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${
         r.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>{r.status || '—'}</span>) },
   { h: 'Product Type', cell: r => <span className="text-sm text-gray-600">{r.product_type || '—'}</span> },
-  { h: 'Zoho Last Modified', cell: r => <span className="text-xs text-gray-500"><TimeCell value={r.last_modified_time} /></span> },
+  { h: 'Zoho Last Modified', sortKey: 'modified', cell: r => <span className="text-xs text-gray-500"><TimeCell value={r.last_modified_time} /></span> },
   { h: 'Last Synced', cell: r => <span className="text-xs text-gray-500"><TimeCell value={r.synced_at} /></span> },
 ]
+
+const ITEM_SORT_LABELS = {
+  qty_sold: 'qty sold',
+  modified: 'Zoho last modified',
+  rate: 'rate',
+  sku: 'SKU',
+}
+
+function SortTh({ col, sort, order, onSort }) {
+  if (!col.sortKey) {
+    return <th className={`th ${col.right ? 'text-right' : ''}`}>{col.h}</th>
+  }
+  const active = sort === col.sortKey
+  return (
+    <th className={`th ${col.right ? 'text-right' : ''}`}>
+      <button
+        type="button"
+        onClick={() => onSort(col.sortKey)}
+        className={`inline-flex items-center gap-1 hover:text-navy-700 ${col.right ? 'ml-auto' : ''} ${active ? 'text-navy-700 font-semibold' : ''}`}
+        title={`Sort by ${col.h}`}
+      >
+        {col.h}
+        {active
+          ? (order === 'desc' ? <ChevronDown size={14} /> : <ChevronUp size={14} />)
+          : <ChevronsUpDown size={12} className="opacity-40" />}
+      </button>
+    </th>
+  )
+}
 
 const rowKey = (tab, r, i) =>
   tab === 'daily' ? `${r.item_id}-${r.price_date}-${i}`
@@ -202,6 +231,8 @@ export default function ZohoPriceHistory() {
   const [modTo, setModTo] = useState('')
   const [soldFrom, setSoldFrom] = useState(daysAgoISO(30))
   const [soldTo, setSoldTo] = useState(todayISO())
+  const [itemSort, setItemSort] = useState('qty_sold')
+  const [itemOrder, setItemOrder] = useState('desc')
   const [limit, setLimit] = useState(250)
   const [offset, setOffset] = useState(0)
 
@@ -216,7 +247,17 @@ export default function ZohoPriceHistory() {
     return () => clearTimeout(t)
   }, [q])
 
-  useEffect(() => { setOffset(0) }, [tab, from, to, status, dailyView, limit, changedInPeriod, modFrom, modTo, soldFrom, soldTo])
+  useEffect(() => { setOffset(0) }, [tab, from, to, status, dailyView, limit, changedInPeriod, modFrom, modTo, soldFrom, soldTo, itemSort, itemOrder])
+
+  const handleItemSort = useCallback((key) => {
+    setOffset(0)
+    if (itemSort === key) {
+      setItemOrder(o => (o === 'desc' ? 'asc' : 'desc'))
+    } else {
+      setItemSort(key)
+      setItemOrder(key === 'sku' ? 'asc' : 'desc')
+    }
+  }, [itemSort])
 
   const params = useMemo(() => {
     const p = { limit, offset }
@@ -227,6 +268,8 @@ export default function ZohoPriceHistory() {
       if (modTo) p.modTo = modTo
       if (soldFrom) p.soldFrom = soldFrom
       if (soldTo) p.soldTo = soldTo
+      p.sort = itemSort
+      p.order = itemOrder
       return p
     }
     p.from = from
@@ -238,7 +281,7 @@ export default function ZohoPriceHistory() {
     if (onlyChanges) p.onlyChanges = true
     if (changedInPeriod) p.changedInPeriod = true
     return p
-  }, [tab, from, to, qApplied, status, onlyChanges, changedInPeriod, limit, offset, modFrom, modTo, soldFrom, soldTo])
+  }, [tab, from, to, qApplied, status, onlyChanges, changedInPeriod, limit, offset, modFrom, modTo, soldFrom, soldTo, itemSort, itemOrder])
 
   const load = useCallback(() => {
     setLoading(true); setError(null)
@@ -272,6 +315,8 @@ export default function ZohoPriceHistory() {
       if (modTo) p.modTo = modTo
       if (soldFrom) p.soldFrom = soldFrom
       if (soldTo) p.soldTo = soldTo
+      p.sort = itemSort
+      p.order = itemOrder
     } else {
       if (onlyChanges) p.onlyChanges = true
       if (changedInPeriod) p.changedInPeriod = true
@@ -387,9 +432,10 @@ export default function ZohoPriceHistory() {
       )}
       {tab === 'items' && !loading && (
         <p className="px-4 sm:px-6 -mt-2 mb-3 text-xs text-gray-500">
-          {data.total.toLocaleString()} Zoho catalog item{data.total === 1 ? '' : 's'} — sorted by most recently modified in Zoho.
+          {data.total.toLocaleString()} Zoho catalog item{data.total === 1 ? '' : 's'} — sorted by {ITEM_SORT_LABELS[itemSort] || itemSort} ({itemOrder === 'desc' ? 'high → low' : 'low → high'}).
           Qty sold sums product line quantities from Zoho orders ({soldFrom} → {soldTo}), excluding void/cancelled/refunded.
           {modFrom || modTo ? ` Item list filtered to modified ${modFrom || '…'} → ${modTo || '…'}.` : ''}
+          {' '}Click column headers to re-sort.
         </p>
       )}
 
@@ -405,6 +451,25 @@ export default function ZohoPriceHistory() {
             onlyChanges
               ? <DailyChangesTable rows={data.rows} />
               : <DailyCalendarTable groups={dailyGroups} />
+          ) : tab === 'items' ? (
+            <table className="w-full">
+              <thead>
+                <tr className="border-b bg-gray-50/80">
+                  {ITEM_COLS.map(c => (
+                    <SortTh key={c.h} col={c} sort={itemSort} order={itemOrder} onSort={handleItemSort} />
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {data.rows.map((r, i) => (
+                  <tr key={rowKey(tab, r, i)} className="tr-hover">
+                    {ITEM_COLS.map(c => (
+                      <td key={c.h} className={`td ${c.right ? 'text-right' : ''} ${c.wide ? 'max-w-md' : ''}`}>{c.cell(r)}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           ) : (
             <table className="w-full">
               <thead>
