@@ -254,6 +254,8 @@ app.get('/api/referrals', handle(async req => {
     date: req.query.date || req.query.date_from,
     end_date: req.query.end_date || req.query.date_to,
     search: req.query.reference || req.query.search,
+    coupon: req.query.coupon,
+    bb: req.query.bb,
     orderby: req.query.orderby,
     order: req.query.order,
   }
