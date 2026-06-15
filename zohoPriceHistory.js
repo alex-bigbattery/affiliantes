@@ -14,12 +14,21 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import { pool } from './db.js'
 import { ZOHO_ORDER_STATUS_EXCLUDED } from './orderFilters.js'
+import {
+  effectiveOrderDateFromClause,
+  effectiveOrderDateToClause,
+} from './dateUtils.js'
 
 const PRODUCT_LINE_FILTER = `
   COALESCE(li->>'name', '') <> 'Shipping Charge'
   AND COALESCE(li->>'line_item_type', '') <> 'service'
   AND NOT COALESCE((li->>'is_component')::boolean, false)
 `
+
+/** ISO YYYY-MM-DD prefix from Zoho TEXT timestamps — never ::date cast on raw values. */
+function zohoIsoDateExpr(expr) {
+  return `CASE WHEN ${expr} ~ '^\\d{4}-\\d{2}-\\d{2}' THEN LEFT(${expr}, 10) END`
+}
 
 class HttpError extends Error {
   constructor(status, message) { super(message); this.status = status }
@@ -257,18 +266,18 @@ function itemsQueryBody(f) {
   }
   if (f.status) where.push(`i.status = ${p(f.status)}`)
   if (f.modFrom) {
-    where.push(`NULLIF(LEFT(i.last_modified_time, 10), '')::date >= ${p(f.modFrom)}::date`)
+    where.push(`${zohoIsoDateExpr('i.last_modified_time')} >= ${p(f.modFrom)}`)
   }
   if (f.modTo) {
-    where.push(`NULLIF(LEFT(i.last_modified_time, 10), '')::date <= ${p(f.modTo)}::date`)
+    where.push(`${zohoIsoDateExpr('i.last_modified_time')} <= ${p(f.modTo)}`)
   }
 
   const salesDateWhere = []
   if (f.soldFrom) {
-    salesDateWhere.push(`NULLIF(LEFT(COALESCE(s.order_date, ''), 10), '')::date >= ${p(f.soldFrom)}::date`)
+    salesDateWhere.push(effectiveOrderDateFromClause('s', 'wo', p(f.soldFrom)))
   }
   if (f.soldTo) {
-    salesDateWhere.push(`NULLIF(LEFT(COALESCE(s.order_date, ''), 10), '')::date <= ${p(f.soldTo)}::date`)
+    salesDateWhere.push(effectiveOrderDateToClause('s', 'wo', p(f.soldTo)))
   }
   const salesDateSql = salesDateWhere.length ? ` AND ${salesDateWhere.join(' AND ')}` : ''
 
@@ -291,7 +300,7 @@ function itemsQueryBody(f) {
     ) sales ON UPPER(TRIM(i.sku)) = sales.sku_key
     WHERE ${where.join(' AND ')}`
 
-  return { sql, vals, orderBy: ` ORDER BY NULLIF(i.last_modified_time, '') DESC NULLS LAST, i.sku ASC` }
+  return { sql, vals, orderBy: ` ORDER BY ${zohoIsoDateExpr('i.last_modified_time')} DESC NULLS LAST, i.sku ASC` }
 }
 
 const SELECT = {
