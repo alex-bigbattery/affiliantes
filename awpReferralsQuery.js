@@ -37,7 +37,11 @@ export async function queryAwpReferrals({
     LEFT JOIN wc_orders wo ON wo.order_id::text = NULLIF(TRIM(r.reference), '')
     LEFT JOIN sales_orders s ON oc.salesorder_number IS NOT NULL
       AND UPPER(TRIM(s.salesorder_number)) = UPPER(TRIM(oc.salesorder_number))
+    LEFT JOIN sales_orders sw ON wo.order_number IS NOT NULL
+      AND UPPER(TRIM(sw.salesorder_number)) = UPPER(TRIM(wo.order_number))
   `
+
+  const ORDER_EXPR = `COALESCE(oc.salesorder_number, wo.order_number, sw.salesorder_number)`
 
   const COUPON_EXPR = `NULLIF(TRIM(COALESCE(
     oc.coupon_code,
@@ -46,7 +50,7 @@ export async function queryAwpReferrals({
     ''
   )), '')`
 
-  const BB_EXPR = `COALESCE(oc.salesorder_number, wo.order_number, NULLIF(TRIM(r.reference), '')) ILIKE 'BB%'`
+  const BB_EXPR = `${ORDER_EXPR} ILIKE 'BB%'`
 
   if (status && status !== 'all') {
     if (status === 'open') {
@@ -68,7 +72,7 @@ export async function queryAwpReferrals({
       OR r.referral_id::text ILIKE $${vals.length}
       OR COALESCE(a.display_name, '') ILIKE $${vals.length}
       OR COALESCE(a.payment_email, '') ILIKE $${vals.length}
-      OR COALESCE(oc.salesorder_number, '') ILIKE $${vals.length}
+      OR COALESCE(oc.salesorder_number, wo.order_number, sw.salesorder_number, '') ILIKE $${vals.length}
       OR ${COUPON_EXPR} ILIKE $${vals.length}
     )`)
   }
@@ -123,7 +127,7 @@ export async function queryAwpReferrals({
       r.raw,
       r.synced_at,
       COALESCE(a.display_name, a.username) AS affiliate_name,
-      oc.salesorder_number,
+      ${ORDER_EXPR} AS salesorder_number,
       ${COUPON_EXPR} AS resolved_coupon,
       (oc.salesorder_number IS NOT NULL) AS in_ledger
   `
