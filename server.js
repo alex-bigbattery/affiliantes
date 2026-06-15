@@ -21,6 +21,7 @@ import { runCouponMapSync } from './couponMapSync.js'
 import { registerZohoPriceHistory } from './zohoPriceHistory.js'
 import { registerTaxEstimate } from './taxEstimate.js'
 import { syncOrderCommissions, orderCommissionsMonthly, queryOrderCommissions, updateCommissionStatus, commissionStatsSummary, mapCommissionRow, findOrderCommissionById } from './orderCommissionsSync.js'
+import { queryAwpReferrals } from './awpReferralsQuery.js'
 import {
   ZOHO_ORDER_STATUS_EXCLUDED,
   filteredOrderExcluded,
@@ -241,21 +242,26 @@ app.delete('/api/affiliates/:id', handle(async req => {
   return result
 }))
 
-// ── REFERRALS (Supabase order_commissions — complete by order date) ─────────
+// ── REFERRALS (order_commissions ledger + AffiliateWP history) ────────────────
 app.get('/api/referrals', handle(async req => {
   const fetchAll = req.query.number === 'all' || req.query.number === '0'
-  const result = await queryOrderCommissions({
+  const source = String(req.query.source || 'orders').toLowerCase()
+  const common = {
     number: fetchAll ? 10000 : req.query.number,
     offset: req.query.offset,
     status: req.query.status,
     affiliate_id: req.query.affiliate_id,
     date: req.query.date || req.query.date_from,
     end_date: req.query.end_date || req.query.date_to,
-    reference: req.query.reference || req.query.search,
+    search: req.query.reference || req.query.search,
     orderby: req.query.orderby,
     order: req.query.order,
-  })
-  return result
+  }
+  if (source === 'wp' || source === 'affiliatewp') {
+    return { ...(await queryAwpReferrals(common)), source: 'affiliatewp' }
+  }
+  const { search, ...orderParams } = common
+  return { ...(await queryOrderCommissions({ ...orderParams, reference: search })), source: 'orders' }
 }))
 
 app.get('/api/referrals/:id', handle(async req => {
