@@ -116,6 +116,7 @@ const RUN_COLS = [
 const ITEM_COLS = [
   { h: 'Item', cell: r => <ItemCell sku={r.sku} name={r.name} />, wide: true },
   { h: 'Rate', cell: r => <span className="text-sm font-medium">{fmt(r.rate)}</span>, right: true },
+  { h: 'Qty sold', cell: r => <span className="text-sm font-medium tabular-nums">{Number(r.qty_sold ?? 0).toLocaleString()}</span>, right: true },
   { h: 'Status', cell: r => (
       <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${
         r.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>{r.status || '—'}</span>) },
@@ -199,6 +200,8 @@ export default function ZohoPriceHistory() {
   const [changedInPeriod, setChangedInPeriod] = useState(false)
   const [modFrom, setModFrom] = useState('')
   const [modTo, setModTo] = useState('')
+  const [soldFrom, setSoldFrom] = useState(daysAgoISO(30))
+  const [soldTo, setSoldTo] = useState(todayISO())
   const [limit, setLimit] = useState(250)
   const [offset, setOffset] = useState(0)
 
@@ -213,7 +216,7 @@ export default function ZohoPriceHistory() {
     return () => clearTimeout(t)
   }, [q])
 
-  useEffect(() => { setOffset(0) }, [tab, from, to, status, dailyView, limit, changedInPeriod, modFrom, modTo])
+  useEffect(() => { setOffset(0) }, [tab, from, to, status, dailyView, limit, changedInPeriod, modFrom, modTo, soldFrom, soldTo])
 
   const params = useMemo(() => {
     const p = { limit, offset }
@@ -222,6 +225,8 @@ export default function ZohoPriceHistory() {
       if (status !== 'all') p.status = status
       if (modFrom) p.modFrom = modFrom
       if (modTo) p.modTo = modTo
+      if (soldFrom) p.soldFrom = soldFrom
+      if (soldTo) p.soldTo = soldTo
       return p
     }
     p.from = from
@@ -233,7 +238,7 @@ export default function ZohoPriceHistory() {
     if (onlyChanges) p.onlyChanges = true
     if (changedInPeriod) p.changedInPeriod = true
     return p
-  }, [tab, from, to, qApplied, status, onlyChanges, changedInPeriod, limit, offset, modFrom, modTo])
+  }, [tab, from, to, qApplied, status, onlyChanges, changedInPeriod, limit, offset, modFrom, modTo, soldFrom, soldTo])
 
   const load = useCallback(() => {
     setLoading(true); setError(null)
@@ -265,6 +270,8 @@ export default function ZohoPriceHistory() {
     if (tab === 'items') {
       if (modFrom) p.modFrom = modFrom
       if (modTo) p.modTo = modTo
+      if (soldFrom) p.soldFrom = soldFrom
+      if (soldTo) p.soldTo = soldTo
     } else {
       if (onlyChanges) p.onlyChanges = true
       if (changedInPeriod) p.changedInPeriod = true
@@ -310,12 +317,20 @@ export default function ZohoPriceHistory() {
           </div>
         )}
         {tab === 'items' && (
-          <div className="flex items-center gap-2">
-            <span className="text-gray-500 text-sm whitespace-nowrap">Modified in Zoho</span>
-            <input type="date" className="input w-40" value={modFrom} onChange={e => setModFrom(e.target.value)} max={modTo || undefined} title="Optional — from date" />
-            <span className="text-gray-400 text-sm">to</span>
-            <input type="date" className="input w-40" value={modTo} onChange={e => setModTo(e.target.value)} min={modFrom || undefined} title="Optional — to date" />
-          </div>
+          <>
+            <div className="flex items-center gap-2">
+              <span className="text-gray-500 text-sm whitespace-nowrap">Sales period</span>
+              <input type="date" className="input w-40" value={soldFrom} onChange={e => setSoldFrom(e.target.value)} max={soldTo || undefined} title="Qty sold — order date from" />
+              <span className="text-gray-400 text-sm">to</span>
+              <input type="date" className="input w-40" value={soldTo} onChange={e => setSoldTo(e.target.value)} min={soldFrom || undefined} title="Qty sold — order date to" />
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-gray-500 text-sm whitespace-nowrap">Modified in Zoho</span>
+              <input type="date" className="input w-40" value={modFrom} onChange={e => setModFrom(e.target.value)} max={modTo || undefined} title="Optional — from date" />
+              <span className="text-gray-400 text-sm">to</span>
+              <input type="date" className="input w-40" value={modTo} onChange={e => setModTo(e.target.value)} min={modFrom || undefined} title="Optional — to date" />
+            </div>
+          </>
         )}
         {showSearch && (
           <div className="relative">
@@ -373,7 +388,8 @@ export default function ZohoPriceHistory() {
       {tab === 'items' && !loading && (
         <p className="px-4 sm:px-6 -mt-2 mb-3 text-xs text-gray-500">
           {data.total.toLocaleString()} Zoho catalog item{data.total === 1 ? '' : 's'} — sorted by most recently modified in Zoho.
-          {modFrom || modTo ? ` Filtered to modified ${modFrom || '…'} → ${modTo || '…'}.` : ''}
+          Qty sold sums product line quantities from Zoho orders ({soldFrom} → {soldTo}), excluding void/cancelled/refunded.
+          {modFrom || modTo ? ` Item list filtered to modified ${modFrom || '…'} → ${modTo || '…'}.` : ''}
         </p>
       )}
 

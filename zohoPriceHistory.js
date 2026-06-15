@@ -13,6 +13,13 @@
 // and re-enable the raw_json-on-export role check.
 // ─────────────────────────────────────────────────────────────────────────────
 import { pool } from './db.js'
+import { ZOHO_ORDER_STATUS_EXCLUDED } from './orderFilters.js'
+
+const PRODUCT_LINE_FILTER = `
+  COALESCE(li->>'name', '') <> 'Shipping Charge'
+  AND COALESCE(li->>'line_item_type', '') <> 'service'
+  AND NOT COALESCE((li->>'is_component')::boolean, false)
+`
 
 class HttpError extends Error {
   constructor(status, message) { super(message); this.status = status }
@@ -58,14 +65,21 @@ function parseOptionalDate(name, value) {
 function parseItemFilters(query) {
   const modFrom = parseOptionalDate('modFrom', query.modFrom)
   const modTo = parseOptionalDate('modTo', query.modTo)
+  const soldFrom = parseOptionalDate('soldFrom', query.soldFrom)
+  const soldTo = parseOptionalDate('soldTo', query.soldTo)
   if (modFrom && modTo && modFrom > modTo) {
     throw new HttpError(400, "'modFrom' must be <= 'modTo'")
+  }
+  if (soldFrom && soldTo && soldFrom > soldTo) {
+    throw new HttpError(400, "'soldFrom' must be <= 'soldTo'")
   }
   return {
     q: query.q?.trim() || '',
     status: parseStatus(query.status),
     modFrom,
     modTo,
+    soldFrom,
+    soldTo,
   }
 }
 
@@ -137,6 +151,7 @@ const ITEM_COLS = [
   { header: 'SKU',                key: 'sku',                 type: 'text',     width: 18 },
   { header: 'Name',               key: 'name',                type: 'text',     width: 42 },
   { header: 'Rate',               key: 'rate',                type: 'money',    width: 14 },
+  { header: 'Qty Sold',           key: 'qty_sold',            type: 'int',      width: 12 },
   { header: 'Status',             key: 'status',              type: 'text',     width: 12 },
   { header: 'Product Type',       key: 'product_type',        type: 'text',     width: 16 },
   { header: 'Zoho Last Modified', key: 'last_modified_time',  type: 'datetime', width: 22 },
@@ -232,7 +247,7 @@ function runsFromWhere(f) {
 }
 
 // Latest Zoho modification per catalog item (from Zoho Books sync table `items`).
-function itemsFromWhere(f) {
+function itemsQueryBody(f) {
   const vals = []
   const p = v => { vals.push(v); return '$' + vals.length }
   const where = [`COALESCE(i.sku, '') <> ''`]
@@ -247,7 +262,36 @@ function itemsFromWhere(f) {
   if (f.modTo) {
     where.push(`NULLIF(LEFT(i.last_modified_time, 10), '')::date <= ${p(f.modTo)}::date`)
   }
-  return { sql: `FROM items i WHERE ${where.join(' AND ')}`, vals }
+
+  const salesDateWhere = []
+  if (f.soldFrom) {
+    salesDateWhere.push(`NULLIF(LEFT(COALESCE(s.order_date, ''), 10), '')::date >= ${p(f.soldFrom)}::date`)
+  }
+  if (f.soldTo) {
+    salesDateWhere.push(`NULLIF(LEFT(COALESCE(s.order_date, ''), 10), '')::date <= ${p(f.soldTo)}::date`)
+  }
+  const salesDateSql = salesDateWhere.length ? ` AND ${salesDateWhere.join(' AND ')}` : ''
+
+  const sql = `
+    SELECT i.item_id, i.sku, i.name, i.rate, i.status, i.product_type,
+           i.last_modified_time, i.synced_at,
+           COALESCE(sales.qty_sold, 0)::numeric AS qty_sold
+    FROM items i
+    LEFT JOIN (
+      SELECT UPPER(TRIM(li->>'sku')) AS sku_key,
+             COALESCE(SUM((li->>'quantity')::numeric), 0) AS qty_sold
+      FROM sales_orders s
+      LEFT JOIN wc_orders wo ON wo.order_number_norm = UPPER(TRIM(s.salesorder_number))
+      CROSS JOIN LATERAL jsonb_array_elements(COALESCE(s.raw_json::jsonb->'line_items', '[]'::jsonb)) AS li
+      WHERE NULLIF(TRIM(li->>'sku'), '') IS NOT NULL
+        AND ${PRODUCT_LINE_FILTER}
+        AND ${ZOHO_ORDER_STATUS_EXCLUDED}
+        ${salesDateSql}
+      GROUP BY 1
+    ) sales ON UPPER(TRIM(i.sku)) = sales.sku_key
+    WHERE ${where.join(' AND ')}`
+
+  return { sql, vals, orderBy: ` ORDER BY NULLIF(i.last_modified_time, '') DESC NULLS LAST, i.sku ASC` }
 }
 
 const SELECT = {
@@ -255,13 +299,10 @@ const SELECT = {
                      s.zoho_last_modified_time `,
   runs:      `SELECT r.id, r.started_at, r.finished_at, r.status,
                      r.item_count, r.changed_count `,
-  items:     `SELECT i.item_id, i.sku, i.name, i.rate, i.status, i.product_type,
-                     i.last_modified_time, i.synced_at `,
 }
 const ORDER = {
   snapshots: ` ORDER BY s.captured_at DESC, s.id DESC`,
   runs:      ` ORDER BY r.started_at DESC`,
-  items:     ` ORDER BY NULLIF(i.last_modified_time, '') DESC NULLS LAST, i.sku ASC`,
 }
 
 function jsonRows(kind, rows) {
@@ -270,6 +311,7 @@ function jsonRows(kind, rows) {
     const out = { ...r }
     if ('rate' in out) out.rate = num(out.rate)
     if ('prev_rate' in out) out.prev_rate = num(out.prev_rate)
+    if ('qty_sold' in out) out.qty_sold = out.qty_sold == null ? 0 : Number(out.qty_sold)
     if ('price_date' in out && out.price_date != null) {
       out.price_date = toIsoDateOnly(out.price_date)
     }
@@ -311,6 +353,26 @@ async function exportRows(kind, fromWhere, f) {
   const { sql, vals } = fromWhere(f)
   const cap = '$' + vals.push(EXPORT_CAP + 1)
   const { rows } = await pool.query(`${SELECT[kind]} ${sql}${ORDER[kind]} LIMIT ${cap}`, vals)
+  const truncated = rows.length > EXPORT_CAP
+  return { rows: truncated ? rows.slice(0, EXPORT_CAP) : rows, truncated }
+}
+
+async function itemsListQuery(f) {
+  const { sql, vals, orderBy } = itemsQueryBody(f)
+  const countVals = [...vals]
+  const { rows: [c] } = await pool.query(`SELECT COUNT(*)::int AS n FROM (${sql}) counted`, countVals)
+  const total = c.n
+  const pageVals = [...vals, f.limit, f.offset]
+  const lim = '$' + (vals.length + 1)
+  const off = '$' + (vals.length + 2)
+  const { rows } = await pool.query(`${sql}${orderBy} LIMIT ${lim} OFFSET ${off}`, pageVals)
+  return { rows: jsonRows('items', rows), total, has_more: f.offset + rows.length < total }
+}
+
+async function itemsExportRows(f) {
+  const { sql, vals, orderBy } = itemsQueryBody(f)
+  const cap = '$' + vals.push(EXPORT_CAP + 1)
+  const { rows } = await pool.query(`${sql}${orderBy} LIMIT ${cap}`, vals)
   const truncated = rows.length > EXPORT_CAP
   return { rows: truncated ? rows.slice(0, EXPORT_CAP) : rows, truncated }
 }
@@ -383,11 +445,11 @@ export function registerZohoPriceHistory(app) {
   const DAILY_PARAMS    = ['from', 'to', 'q', 'status', 'onlyChanges', 'changedInPeriod', 'limit', 'offset']
   const SNAPSHOT_PARAMS = ['from', 'to', 'q', 'status', 'changedInPeriod', 'limit', 'offset']
   const RUN_PARAMS      = ['from', 'to', 'limit', 'offset']
-  const ITEM_PARAMS     = ['q', 'status', 'modFrom', 'modTo', 'limit', 'offset']
+  const ITEM_PARAMS     = ['q', 'status', 'modFrom', 'modTo', 'soldFrom', 'soldTo', 'limit', 'offset']
   const DAILY_EXPORT    = ['from', 'to', 'q', 'status', 'onlyChanges', 'changedInPeriod']
   const SNAPSHOT_EXPORT = ['from', 'to', 'q', 'status', 'changedInPeriod']
   const RUN_EXPORT      = ['from', 'to']
-  const ITEM_EXPORT     = ['q', 'status', 'modFrom', 'modTo']
+  const ITEM_EXPORT     = ['q', 'status', 'modFrom', 'modTo', 'soldFrom', 'soldTo']
 
   const dailyFilters = f => ([
     ['from', f.from], ['to', f.to], ['search (sku/name)', f.q || '(none)'],
@@ -403,8 +465,11 @@ export function registerZohoPriceHistory(app) {
   const itemFilters = f => ([
     ['search (sku/name)', f.q || '(none)'],
     ['status', f.status || 'all'],
+    ['sales period from (order date)', f.soldFrom || '(any)'],
+    ['sales period to (order date)', f.soldTo || '(any)'],
     ['modified in Zoho from', f.modFrom || '(any)'],
     ['modified in Zoho to', f.modTo || '(any)'],
+    ['qty sold source', 'sales_orders line_items (excludes void/cancelled/refunded)'],
     ['source', 'items table (Zoho Books catalog sync)'],
   ])
 
@@ -472,15 +537,15 @@ export function registerZohoPriceHistory(app) {
     rejectUnknown(req.query, ITEM_PARAMS)
     const { limit, offset } = parsePaging(req.query)
     const f = { ...parseItemFilters(req.query), limit, offset }
-    res.json(await listQuery('items', itemsFromWhere, f))
+    res.json(await itemsListQuery(f))
   }))
 
   app.get('/api/zoho-price-history/items/export', wrap(async (req, res) => {
     rejectUnknown(req.query, ITEM_EXPORT)
     const f = parseItemFilters(req.query)
-    const { rows, truncated } = await exportRows('items', itemsFromWhere, f)
-    const from = f.modFrom || 'all'
-    const to = f.modTo || 'all'
+    const { rows, truncated } = await itemsExportRows(f)
+    const from = f.soldFrom || f.modFrom || 'all'
+    const to = f.soldTo || f.modTo || 'all'
     await streamWorkbook(res, { subtab: 'items', sourceTable: 'items', cols: ITEM_COLS, rows, truncated, filters: itemFilters(f), from, to })
   }))
 }
