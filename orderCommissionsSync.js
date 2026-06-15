@@ -205,7 +205,12 @@ export async function queryOrderCommissions({
   }
   if (reference) {
     vals.push(`%${reference}%`)
-    clauses.push(`(salesorder_number ILIKE $${vals.length} OR wc_order_id::text ILIKE $${vals.length})`)
+    clauses.push(`(
+      salesorder_number ILIKE $${vals.length}
+      OR wc_order_id::text ILIKE $${vals.length}
+      OR affiliate_name ILIKE $${vals.length}
+      OR coupon_code ILIKE $${vals.length}
+    )`)
   }
   if (date) {
     vals.push(date)

@@ -2,7 +2,7 @@
 import { useSearchParams } from 'react-router-dom'
 import { api, fmt, fmtDate } from '../api'
 import { PageHeader, Spinner, ErrorMsg, StatusBadge, Empty } from '../components/Layout'
-import { CheckSquare, Square, ChevronLeft, ChevronRight } from 'lucide-react'
+import { CheckSquare, Square, ChevronLeft, ChevronRight, Search } from 'lucide-react'
 import ExportButtons from '../components/ExportButtons'
 
 const STATUSES = ['all', 'open', 'estimated', 'unpaid', 'paid', 'pending', 'rejected']
@@ -41,6 +41,7 @@ export default function Referrals() {
   const [offset, setOffset] = useState(0)
 
   const status = searchParams.get('status') || 'all'
+  const search = searchParams.get('q') || ''
   const affId = searchParams.get('affiliate') || ''
   const dateFrom = searchParams.get('from') || ''
   const dateTo = searchParams.get('to') || ''
@@ -108,6 +109,7 @@ export default function Referrals() {
     }
     if (status && status !== 'all') params.status = status
     if (affId) params.affiliate_id = affId
+    if (search.trim()) params.search = search.trim()
     if (from) params.date = from
     if (to) params.end_date = to
 
@@ -119,7 +121,7 @@ export default function Referrals() {
       })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false))
-  }, [status, affId, dateFrom, dateTo, monthFilter, offset])
+  }, [status, search, affId, dateFrom, dateTo, monthFilter, offset])
 
   useEffect(() => { load() }, [load])
   useEffect(() => {
@@ -218,6 +220,16 @@ export default function Referrals() {
       </div>
 
       <div className="flex flex-wrap items-center gap-3 px-6 mb-4">
+        <div className="relative w-56">
+          <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input
+            type="search"
+            className="input pl-8 w-full"
+            placeholder="Order, coupon, affiliate…"
+            value={search}
+            onChange={e => set('q', e.target.value)}
+          />
+        </div>
         <select className="select w-52" value={affId} onChange={e => set('affiliate', e.target.value)}>
           <option value="">All affiliates</option>
           {affiliates.map(a => (
@@ -233,10 +245,10 @@ export default function Referrals() {
           <span className="text-gray-400 text-sm">to</span>
           <input type="date" className="input w-40" value={dateTo} onChange={e => setDateTo(e.target.value)} />
         </div>
-        {(affId || dateFrom || dateTo || monthFilter) && (
+        {(search || affId || dateFrom || dateTo || monthFilter) && (
           <button className="btn-ghost text-xs" onClick={() => {
             const p = new URLSearchParams(searchParams)
-            p.delete('affiliate'); p.delete('from'); p.delete('to'); p.delete('month')
+            p.delete('q'); p.delete('affiliate'); p.delete('from'); p.delete('to'); p.delete('month')
             setSearchParams(p)
             setOffset(0)
             setSelected(new Set())
