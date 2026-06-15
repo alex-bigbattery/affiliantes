@@ -15,8 +15,9 @@ const TABS = [
 ]
 
 const DAILY_VIEWS = [
+  { key: 'matrix',   label: 'Calendar grid' },
   { key: 'changes',  label: 'Price changes' },
-  { key: 'calendar', label: 'Full calendar' },
+  { key: 'calendar', label: 'Day list' },
 ]
 
 function TimeCell({ value }) {
@@ -160,6 +161,58 @@ const rowKey = (tab, r, i) =>
   : tab === 'items' ? (r.item_id ?? r.sku ?? i)
   : (r.id ?? r.run_id)
 
+function DailyMatrixTable({ dates, monthGroups, rows, rowStart = 1 }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-max border-collapse">
+        <thead>
+          <tr className="border-b bg-navy-700 text-white text-xs">
+            <th className="th sticky left-0 z-20 bg-navy-700 w-10 text-right" rowSpan={2}>#</th>
+            <th className="th sticky left-10 z-20 bg-navy-700 w-36" rowSpan={2}>SKU</th>
+            <th className="th sticky left-[184px] z-20 bg-navy-700 min-w-[220px]" rowSpan={2}>Name</th>
+            {monthGroups.map(g => (
+              <th key={g.label} colSpan={g.dates.length} className="th text-center border-l border-navy-500/50 py-1.5">
+                {g.label}
+              </th>
+            ))}
+            <th className="th text-right w-20 border-l border-navy-500/50" rowSpan={2}>Rate</th>
+          </tr>
+          <tr className="border-b bg-indigo-50 text-[11px] text-gray-600">
+            {dates.map(dt => (
+              <th key={dt} className="th text-center w-14 px-1 py-1 font-semibold border-l border-gray-200">
+                {parseInt(dt.slice(8, 10), 10)}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-100">
+          {rows.map((r, i) => {
+            let prev = null
+            return (
+              <tr key={r.item_id ?? r.sku ?? i} className="tr-hover">
+                <td className="td sticky left-0 z-10 bg-white text-xs text-gray-400 tabular-nums text-right w-10">{rowStart + i}</td>
+                <td className="td sticky left-10 z-10 bg-white font-mono text-[11px] text-gray-600 w-36 truncate" title={r.sku}>{r.sku}</td>
+                <td className="td sticky left-[184px] z-10 bg-white text-sm text-gray-900 max-w-[220px] truncate" title={r.name}>{r.name}</td>
+                {dates.map(dt => {
+                  const rate = r.rates?.[dt]
+                  const changed = prev != null && rate != null && rate !== prev
+                  if (rate != null) prev = rate
+                  return (
+                    <td key={dt} className={`td text-center text-xs tabular-nums px-1 border-l border-gray-100 ${changed ? 'bg-amber-50 font-semibold text-amber-900' : ''}`}>
+                      {rate == null ? <span className="text-gray-200">·</span> : fmt(rate)}
+                    </td>
+                  )
+                })}
+                <td className="td text-right text-sm font-medium border-l border-gray-200">{fmt(r.current_rate)}</td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 function DailyChangesTable({ rows, rowStart = 1 }) {
   return (
     <table className="w-full">
@@ -227,7 +280,7 @@ function DailyCalendarTable({ groups, rowStart = 1 }) {
 
 export default function ZohoPriceHistory() {
   const [tab, setTab] = useState('daily')
-  const [dailyView, setDailyView] = useState('changes')
+  const [dailyView, setDailyView] = useState('matrix')
   const [from, setFrom] = useState(daysAgoISO(7))
   const [to, setTo]     = useState(todayISO())
   const [q, setQ]       = useState('')
@@ -244,6 +297,7 @@ export default function ZohoPriceHistory() {
   const [offset, setOffset] = useState(0)
 
   const [data, setData]   = useState({ rows: [], total: 0, has_more: false })
+  const [matrixData, setMatrixData] = useState({ dates: [], monthGroups: [], rows: [], total: 0, has_more: false })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
@@ -292,6 +346,19 @@ export default function ZohoPriceHistory() {
 
   const load = useCallback(() => {
     setLoading(true); setError(null)
+    if (tab === 'daily' && dailyView === 'matrix') {
+      api.zohoDailyMatrix(params)
+        .then(d => setMatrixData({
+          dates: d.dates || [],
+          monthGroups: d.monthGroups || [],
+          rows: d.rows || [],
+          total: d.total || 0,
+          has_more: !!d.has_more,
+        }))
+        .catch(e => setError(e.message))
+        .finally(() => setLoading(false))
+      return
+    }
     const call = tab === 'daily' ? api.zohoDaily
       : tab === 'snapshots' ? api.zohoSnapshots
       : tab === 'items' ? api.zohoItems
@@ -300,7 +367,7 @@ export default function ZohoPriceHistory() {
       .then(d => setData({ rows: d.rows || [], total: d.total || 0, has_more: !!d.has_more }))
       .catch(e => setError(e.message))
       .finally(() => setLoading(false))
-  }, [tab, params])
+  }, [tab, dailyView, params])
 
   useEffect(() => { load() }, [load])
 
@@ -335,8 +402,9 @@ export default function ZohoPriceHistory() {
   const showStatus = tab !== 'runs'
   const showSearch = tab !== 'runs'
   const showCaptureDates = tab !== 'items'
-  const pageStart = data.total === 0 ? 0 : offset + 1
-  const pageEnd = offset + data.rows.length
+  const activeData = tab === 'daily' && dailyView === 'matrix' ? matrixData : data
+  const pageStart = activeData.total === 0 ? 0 : offset + 1
+  const pageEnd = offset + activeData.rows.length
   const rowStart = offset + 1
 
   return (
@@ -345,7 +413,7 @@ export default function ZohoPriceHistory() {
         title="Zoho Price History"
         subtitle="Read-only view of item price snapshots captured from Zoho (3×/day by an external service)"
         actions={
-          <button className="btn-outline" onClick={exportXlsx} disabled={loading || data.total === 0} title="Export the filtered set to Excel">
+          <button className="btn-outline" onClick={exportXlsx} disabled={loading || activeData.total === 0} title="Export calendar grid to Excel (one row per SKU, columns = days)">
             <Download size={14} /> Export to Excel
           </button>
         }
@@ -398,7 +466,7 @@ export default function ZohoPriceHistory() {
             <option value="inactive">Inactive only</option>
           </select>
         )}
-        {(tab === 'daily' || tab === 'snapshots') && (
+        {(tab === 'daily' || tab === 'snapshots') && dailyView !== 'matrix' && (
           <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer select-none">
             <input
               type="checkbox"
@@ -427,10 +495,12 @@ export default function ZohoPriceHistory() {
 
       {tab === 'daily' && !loading && (
         <p className="px-4 sm:px-6 -mt-2 mb-3 text-xs text-gray-500">
-          {onlyChanges
+          {dailyView === 'matrix'
+            ? `${matrixData.total.toLocaleString()} SKU${matrixData.total === 1 ? '' : 's'} × ${matrixData.dates.length} day${matrixData.dates.length === 1 ? '' : 's'} (${from} → ${to}). Yellow = price changed from prior day. Excel export uses the same layout.`
+            : onlyChanges
             ? `${data.total.toLocaleString()} price change${data.total === 1 ? '' : 's'} in range — items with a stable rate are hidden.`
             : `${dailyGroups.length.toLocaleString()} item${dailyGroups.length === 1 ? '' : 's'}, ${data.total.toLocaleString()} day row${data.total === 1 ? '' : 's'} — grouped by SKU.`}
-          {changedInPeriod && ' Showing only SKUs with at least one rate change in the selected dates.'}
+          {changedInPeriod && dailyView !== 'matrix' && ' Showing only SKUs with at least one rate change in the selected dates.'}
         </p>
       )}
       {tab === 'snapshots' && !loading && changedInPeriod && (
@@ -453,10 +523,12 @@ export default function ZohoPriceHistory() {
         <div className="card overflow-x-auto">
           {loading ? (
             <div className="p-8"><Spinner /></div>
-          ) : data.rows.length === 0 ? (
+          ) : activeData.rows.length === 0 ? (
             <Empty label={onlyChanges ? 'No price changes in this date range' : tab === 'items' ? 'No items match these filters' : 'No rows for these filters'} />
           ) : tab === 'daily' ? (
-            onlyChanges
+            dailyView === 'matrix'
+              ? <DailyMatrixTable dates={matrixData.dates} monthGroups={matrixData.monthGroups} rows={matrixData.rows} rowStart={rowStart} />
+              : onlyChanges
               ? <DailyChangesTable rows={data.rows} rowStart={rowStart} />
               : <DailyCalendarTable groups={dailyGroups} rowStart={rowStart} />
           ) : tab === 'items' ? (
@@ -501,12 +573,12 @@ export default function ZohoPriceHistory() {
         </div>
 
         <div className="flex items-center justify-between mt-3 text-sm text-gray-500">
-          <span>{loading ? 'Loading…' : `Showing ${pageStart}–${pageEnd} of ${data.total.toLocaleString()}`}</span>
+          <span>{loading ? 'Loading…' : `Showing ${pageStart}–${pageEnd} of ${activeData.total.toLocaleString()}`}</span>
           <div className="flex gap-2">
             <button className="btn-outline" onClick={() => setOffset(Math.max(0, offset - limit))} disabled={offset === 0 || loading}>
               <ChevronLeft size={14} /> Prev
             </button>
-            <button className="btn-outline" onClick={() => setOffset(offset + limit)} disabled={!data.has_more || loading}>
+            <button className="btn-outline" onClick={() => setOffset(offset + limit)} disabled={!activeData.has_more || loading}>
               Next <ChevronRight size={14} />
             </button>
           </div>

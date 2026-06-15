@@ -368,11 +368,201 @@ async function dailyListQuery(f) {
 }
 
 async function dailyExportRows(f) {
-  const { sql, vals, orderBy } = dailyQuery(f)
+  const { sql, vals } = dailyQuery(f)
+  const orderBy = ` ORDER BY d.sku ASC, d.price_date ASC`
   const cap = '$' + vals.push(EXPORT_CAP + 1)
   const { rows } = await pool.query(`${sql}${orderBy} LIMIT ${cap}`, vals)
   const truncated = rows.length > EXPORT_CAP
   return { rows: truncated ? rows.slice(0, EXPORT_CAP) : rows, truncated }
+}
+
+function enumerateDates(from, to) {
+  const out = []
+  let cur = from
+  while (cur <= to) {
+    out.push(cur)
+    const d = new Date(`${cur}T12:00:00Z`)
+    d.setUTCDate(d.getUTCDate() + 1)
+    cur = d.toISOString().slice(0, 10)
+  }
+  return out
+}
+
+function monthLabelFromIso(iso) {
+  const d = new Date(`${iso}T12:00:00Z`)
+  const month = d.toLocaleString('en-US', { month: 'long', timeZone: 'UTC' }).toLowerCase()
+  return `${d.getUTCFullYear()} ${month}`
+}
+
+function groupDatesByMonth(dates) {
+  const groups = []
+  for (const dt of dates) {
+    const label = monthLabelFromIso(dt)
+    const g = groups[groups.length - 1]
+    if (g && g.label === label) g.dates.push(dt)
+    else groups.push({ label, dates: [dt] })
+  }
+  return groups
+}
+
+function pivotDailyRows(longRows, from, to) {
+  const dates = enumerateDates(from, to)
+  const byItem = new Map()
+  for (const r of longRows) {
+    const key = r.item_id ?? r.sku
+    if (!byItem.has(key)) {
+      byItem.set(key, { item_id: r.item_id, sku: r.sku, name: r.name, rates: {} })
+    }
+    const dt = toIsoDateOnly(r.price_date)
+    if (dt) byItem.get(key).rates[dt] = num(r.rate)
+  }
+  const items = [...byItem.values()].sort((a, b) => String(a.sku || '').localeCompare(String(b.sku || '')))
+  for (const item of items) {
+    let current = null
+    for (const dt of dates) {
+      if (item.rates[dt] != null) current = item.rates[dt]
+    }
+    item.current_rate = current
+  }
+  return { dates, monthGroups: groupDatesByMonth(dates), items }
+}
+
+async function dailyMatrixListQuery(f) {
+  const { sql, vals } = dailyQuery(f)
+  const countVals = [...vals]
+  const { rows: [c] } = await pool.query(
+    `SELECT COUNT(*)::int AS n FROM (SELECT DISTINCT item_id FROM (${sql}) counted) x`,
+    countVals,
+  )
+  const total = c.n
+  const lim = '$' + vals.push(f.limit)
+  const off = '$' + vals.push(f.offset)
+  const pageSql = `
+    WITH daily_data AS (${sql}),
+    item_page AS (
+      SELECT DISTINCT item_id, sku, name FROM daily_data ORDER BY sku ASC
+      LIMIT ${lim} OFFSET ${off}
+    )
+    SELECT d.item_id, d.sku, d.name, d.rate, d.price_date::text AS price_date
+    FROM daily_data d
+    INNER JOIN item_page ip ON ip.item_id = d.item_id
+    ORDER BY d.sku ASC, d.price_date ASC`
+  const { rows } = await pool.query(pageSql, vals)
+  const { dates, monthGroups, items } = pivotDailyRows(jsonRows('daily', rows), f.from, f.to)
+  return {
+    dates,
+    monthGroups,
+    rows: items,
+    total,
+    has_more: f.offset + items.length < total,
+  }
+}
+
+const HEADER_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F3864' } }
+const HEADER_FONT = { bold: true, color: { argb: 'FFFFFFFF' } }
+const CHANGE_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF2CC' } }
+
+function styleHeaderCell(cell) {
+  cell.font = HEADER_FONT
+  cell.fill = HEADER_FILL
+  cell.alignment = { vertical: 'middle', horizontal: 'center' }
+}
+
+async function streamDailyCalendarWorkbook(res, { rows, from, to, truncated, filters }) {
+  const { default: ExcelJS } = await import('exceljs')
+  const exportedAtISO = new Date().toISOString()
+  const stamp = exportedAtISO.slice(0, 16).replace(/:/g, '') + 'Z'
+  const filename = `zoho_daily_calendar_${from}_to_${to}_${stamp}.xlsx`
+  const { dates, monthGroups, items } = pivotDailyRows(jsonRows('daily', rows), from, to)
+
+  const wb = new ExcelJS.Workbook()
+  wb.creator = 'BigBattery Affiliate Dashboard'
+  wb.created = new Date(exportedAtISO)
+
+  const ws = wb.addWorksheet('Calendar')
+  const FIXED = 3 // #, SKU, Name
+  const rateCol = FIXED + dates.length + 1
+
+  ws.getColumn(1).width = 6
+  ws.getColumn(2).width = 18
+  ws.getColumn(3).width = 42
+  for (let i = 0; i < dates.length; i++) ws.getColumn(FIXED + 1 + i).width = 9
+  ws.getColumn(rateCol).width = 12
+
+  styleHeaderCell(ws.getCell(1, 1))
+  ws.getCell(1, 1).value = '#'
+  styleHeaderCell(ws.getCell(1, 2))
+  ws.getCell(1, 2).value = 'SKU'
+  styleHeaderCell(ws.getCell(1, 3))
+  ws.getCell(1, 3).value = 'Name'
+
+  let col = FIXED + 1
+  for (const g of monthGroups) {
+    const startCol = col
+    styleHeaderCell(ws.getCell(1, startCol))
+    ws.getCell(1, startCol).value = g.label
+    for (let i = 1; i < g.dates.length; i++) {
+      styleHeaderCell(ws.getCell(1, startCol + i))
+    }
+    if (g.dates.length > 1) ws.mergeCells(1, startCol, 1, startCol + g.dates.length - 1)
+    for (const dt of g.dates) {
+      const sub = ws.getCell(2, col)
+      sub.value = parseInt(dt.slice(8, 10), 10)
+      sub.font = { bold: true }
+      sub.alignment = { horizontal: 'center' }
+      sub.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEEF2FF' } }
+      col++
+    }
+  }
+
+  styleHeaderCell(ws.getCell(1, rateCol))
+  ws.getCell(1, rateCol).value = 'Rate'
+  ws.getCell(2, rateCol).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEEF2FF' } }
+
+  ws.views = [{ state: 'frozen', xSplit: 3, ySplit: 2 }]
+
+  items.forEach((item, idx) => {
+    const rowNum = 3 + idx
+    ws.getCell(rowNum, 1).value = idx + 1
+    ws.getCell(rowNum, 2).value = item.sku
+    ws.getCell(rowNum, 3).value = item.name
+    let prev = null
+    dates.forEach((dt, i) => {
+      const rate = item.rates[dt]
+      if (rate == null) return
+      const cell = ws.getCell(rowNum, FIXED + 1 + i)
+      cell.value = rate
+      cell.numFmt = '$#,##0.00'
+      cell.alignment = { horizontal: 'center' }
+      if (prev != null && rate !== prev) cell.fill = CHANGE_FILL
+      prev = rate
+    })
+    const rateCell = ws.getCell(rowNum, rateCol)
+    if (item.current_rate != null) {
+      rateCell.value = item.current_rate
+      rateCell.numFmt = '$#,##0.00'
+    }
+  })
+
+  const meta = wb.addWorksheet('Metadata')
+  meta.columns = [{ header: 'Field', key: 'k', width: 28 }, { header: 'Value', key: 'v', width: 70 }]
+  meta.getRow(1).font = { bold: true }
+  if (truncated) {
+    const warn = meta.addRow({ k: '⚠ WARNING', v: `Export truncated to ${EXPORT_CAP.toLocaleString()} day-rows. Narrow filters or date range.` })
+    warn.font = { bold: true, color: { argb: 'FFC00000' } }
+  }
+  meta.addRow({ k: 'Layout', v: 'Calendar matrix — one row per SKU, columns = days in range' })
+  meta.addRow({ k: 'Source table', v: 'item_price_history (expanded by day)' })
+  for (const [k, v] of filters) meta.addRow({ k: `Filter: ${k}`, v: String(v) })
+  meta.addRow({ k: 'SKUs exported', v: items.length })
+  meta.addRow({ k: 'Days in range', v: dates.length })
+  meta.addRow({ k: 'Exported at (UTC)', v: exportedAtISO })
+  meta.addRow({ k: 'Note', v: 'Yellow cells = price changed from previous day in range. Read-only export.' })
+
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`)
+  await wb.xlsx.write(res)
+  res.end()
 }
 
 async function listQuery(kind, fromWhere, f) {
@@ -491,7 +681,7 @@ export function registerZohoPriceHistory(app) {
     ['from', f.from], ['to', f.to], ['search (sku/name)', f.q || '(none)'],
     ['status', f.status || 'all'], ['only days with price change', f.onlyChanges ? 'yes' : 'no'],
     ['only items with price change in period', f.changedInPeriod ? 'yes' : 'no'],
-    ['granularity', 'one row per SKU per calendar day (from item_price_history)'],
+    ['granularity', 'calendar matrix — one row per SKU, columns = days in range'],
   ])
   const snapshotFilters = f => ([
     ['from', f.from], ['to', f.to], ['search (sku/name)', f.q || '(none)'], ['status', f.status || 'all'],
@@ -520,12 +710,20 @@ export function registerZohoPriceHistory(app) {
     res.json(await dailyListQuery(f))
   }))
 
+  app.get('/api/zoho-price-history/daily/matrix', wrap(async (req, res) => {
+    rejectUnknown(req.query, DAILY_PARAMS)
+    const { from, to } = parseRange(req.query)
+    const { limit, offset } = parsePaging(req.query)
+    const f = { from, to, q: req.query.q?.trim() || '', status: parseStatus(req.query.status), onlyChanges: parseBool(req.query.onlyChanges), changedInPeriod: parseBool(req.query.changedInPeriod), limit, offset }
+    res.json(await dailyMatrixListQuery(f))
+  }))
+
   app.get('/api/zoho-price-history/daily/export', wrap(async (req, res) => {
     rejectUnknown(req.query, DAILY_EXPORT)
     const { from, to } = parseRange(req.query)
     const f = { from, to, q: req.query.q?.trim() || '', status: parseStatus(req.query.status), onlyChanges: parseBool(req.query.onlyChanges), changedInPeriod: parseBool(req.query.changedInPeriod) }
     const { rows, truncated } = await dailyExportRows(f)
-    await streamWorkbook(res, { subtab: 'daily', sourceTable: 'item_price_history (expanded by day)', cols: DAILY_COLS, rows, truncated, filters: dailyFilters(f), from, to })
+    await streamDailyCalendarWorkbook(res, { rows, from, to, truncated, filters: dailyFilters(f) })
   }))
 
   // legacy alias

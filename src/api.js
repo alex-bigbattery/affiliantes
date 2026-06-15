@@ -126,6 +126,7 @@ export const api = {
 
   // Zoho Price History (read-only consumption of external capture tables)
   zohoDaily:     (p) => get('/zoho-price-history/daily', p),
+  zohoDailyMatrix: (p) => get('/zoho-price-history/daily/matrix', p),
   zohoPeriods:   (p) => get('/zoho-price-history/daily', p), // legacy alias
   zohoSnapshots: (p) => get('/zoho-price-history/snapshots', p),
   zohoRuns:      (p) => get('/zoho-price-history/runs', p),
