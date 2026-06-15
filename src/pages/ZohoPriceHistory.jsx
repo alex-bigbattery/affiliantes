@@ -160,11 +160,12 @@ const rowKey = (tab, r, i) =>
   : tab === 'items' ? (r.item_id ?? r.sku ?? i)
   : (r.id ?? r.run_id)
 
-function DailyChangesTable({ rows }) {
+function DailyChangesTable({ rows, rowStart = 1 }) {
   return (
     <table className="w-full">
       <thead>
         <tr className="border-b bg-gray-50/80">
+          <th className="th w-10 text-right">#</th>
           <th className="th w-[42%]">Item</th>
           <th className="th w-28">Date</th>
           <th className="th text-right">Price change</th>
@@ -173,6 +174,7 @@ function DailyChangesTable({ rows }) {
       <tbody className="divide-y divide-gray-100">
         {rows.map((r, i) => (
           <tr key={rowKey('daily', r, i)} className="tr-hover">
+            <td className="td text-xs text-gray-400 tabular-nums text-right w-10">{rowStart + i}</td>
             <td className="td max-w-md"><ItemCell sku={r.sku} name={r.name} /></td>
             <td className="td text-sm text-gray-600 whitespace-nowrap">{fmtDate(r.price_date)}</td>
             <td className="td text-right"><RateChangeCell prev={r.prev_rate} rate={r.rate} /></td>
@@ -183,11 +185,13 @@ function DailyChangesTable({ rows }) {
   )
 }
 
-function DailyCalendarTable({ groups }) {
+function DailyCalendarTable({ groups, rowStart = 1 }) {
+  let n = rowStart
   return (
     <table className="w-full">
       <thead>
         <tr className="border-b bg-gray-50/80">
+          <th className="th w-10 text-right">#</th>
           <th className="th w-[42%]">Item</th>
           <th className="th w-28">Date</th>
           <th className="th text-right w-32">Rate</th>
@@ -196,8 +200,11 @@ function DailyCalendarTable({ groups }) {
       <tbody>
         {groups.map(g => {
           const stable = g.rows.every(r => r.rate === g.rows[0]?.rate)
-          return g.rows.map((r, i) => (
+          return g.rows.map((r, i) => {
+            const rowNum = n++
+            return (
             <tr key={`${g.item_id}-${r.price_date}`} className={`tr-hover ${i === 0 ? 'border-t border-gray-200' : ''}`}>
+              <td className="td text-xs text-gray-400 tabular-nums text-right w-10 align-top">{rowNum}</td>
               {i === 0 && (
                 <td className="td align-top max-w-md" rowSpan={g.rows.length}>
                   <ItemCell sku={g.sku} name={g.name} />
@@ -211,7 +218,7 @@ function DailyCalendarTable({ groups }) {
               <td className="td text-sm text-gray-600 whitespace-nowrap">{fmtDate(r.price_date)}</td>
               <td className="td text-right text-sm font-medium">{fmt(r.rate)}</td>
             </tr>
-          ))
+          )})
         })}
       </tbody>
     </table>
@@ -330,6 +337,7 @@ export default function ZohoPriceHistory() {
   const showCaptureDates = tab !== 'items'
   const pageStart = data.total === 0 ? 0 : offset + 1
   const pageEnd = offset + data.rows.length
+  const rowStart = offset + 1
 
   return (
     <div>
@@ -449,12 +457,13 @@ export default function ZohoPriceHistory() {
             <Empty label={onlyChanges ? 'No price changes in this date range' : tab === 'items' ? 'No items match these filters' : 'No rows for these filters'} />
           ) : tab === 'daily' ? (
             onlyChanges
-              ? <DailyChangesTable rows={data.rows} />
-              : <DailyCalendarTable groups={dailyGroups} />
+              ? <DailyChangesTable rows={data.rows} rowStart={rowStart} />
+              : <DailyCalendarTable groups={dailyGroups} rowStart={rowStart} />
           ) : tab === 'items' ? (
             <table className="w-full">
               <thead>
                 <tr className="border-b bg-gray-50/80">
+                  <th className="th w-10 text-right">#</th>
                   {ITEM_COLS.map(c => (
                     <SortTh key={c.h} col={c} sort={itemSort} order={itemOrder} onSort={handleItemSort} />
                   ))}
@@ -463,6 +472,7 @@ export default function ZohoPriceHistory() {
               <tbody className="divide-y divide-gray-100">
                 {data.rows.map((r, i) => (
                   <tr key={rowKey(tab, r, i)} className="tr-hover">
+                    <td className="td text-xs text-gray-400 tabular-nums text-right w-10">{rowStart + i}</td>
                     {ITEM_COLS.map(c => (
                       <td key={c.h} className={`td ${c.right ? 'text-right' : ''} ${c.wide ? 'max-w-md' : ''}`}>{c.cell(r)}</td>
                     ))}
@@ -474,12 +484,14 @@ export default function ZohoPriceHistory() {
             <table className="w-full">
               <thead>
                 <tr className="border-b bg-gray-50/80">
+                  <th className="th w-10 text-right">#</th>
                   {cols.map(c => <th key={c.h} className={`th ${c.right ? 'text-right' : ''}`}>{c.h}</th>)}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {data.rows.map((r, i) => (
                   <tr key={rowKey(tab, r, i)} className="tr-hover">
+                    <td className="td text-xs text-gray-400 tabular-nums text-right w-10">{rowStart + i}</td>
                     {cols.map(c => <td key={c.h} className={`td ${c.right ? 'text-right' : ''} ${c.wide ? 'max-w-md' : ''}`}>{c.cell(r)}</td>)}
                   </tr>
                 ))}
