@@ -11,6 +11,7 @@ const TABS = [
   { key: 'daily',     label: 'Daily prices' },
   { key: 'snapshots', label: 'Snapshots' },
   { key: 'runs',      label: 'Runs' },
+  { key: 'items',     label: 'Last modified' },
 ]
 
 const DAILY_VIEWS = [
@@ -112,9 +113,21 @@ const RUN_COLS = [
   { h: 'Changed', cell: r => <span className="text-sm">{r.changed_count ?? '—'}</span>, right: true },
 ]
 
+const ITEM_COLS = [
+  { h: 'Item', cell: r => <ItemCell sku={r.sku} name={r.name} />, wide: true },
+  { h: 'Rate', cell: r => <span className="text-sm font-medium">{fmt(r.rate)}</span>, right: true },
+  { h: 'Status', cell: r => (
+      <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${
+        r.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>{r.status || '—'}</span>) },
+  { h: 'Product Type', cell: r => <span className="text-sm text-gray-600">{r.product_type || '—'}</span> },
+  { h: 'Zoho Last Modified', cell: r => <span className="text-xs text-gray-500"><TimeCell value={r.last_modified_time} /></span> },
+  { h: 'Last Synced', cell: r => <span className="text-xs text-gray-500"><TimeCell value={r.synced_at} /></span> },
+]
+
 const rowKey = (tab, r, i) =>
   tab === 'daily' ? `${r.item_id}-${r.price_date}-${i}`
   : tab === 'snapshots' ? r.id
+  : tab === 'items' ? (r.item_id ?? r.sku ?? i)
   : (r.id ?? r.run_id)
 
 function DailyChangesTable({ rows }) {
@@ -184,6 +197,8 @@ export default function ZohoPriceHistory() {
   const [qApplied, setQApplied] = useState('')
   const [status, setStatus]     = useState('all')
   const [changedInPeriod, setChangedInPeriod] = useState(false)
+  const [modFrom, setModFrom] = useState('')
+  const [modTo, setModTo] = useState('')
   const [limit, setLimit] = useState(250)
   const [offset, setOffset] = useState(0)
 
@@ -198,10 +213,19 @@ export default function ZohoPriceHistory() {
     return () => clearTimeout(t)
   }, [q])
 
-  useEffect(() => { setOffset(0) }, [tab, from, to, status, dailyView, limit, changedInPeriod])
+  useEffect(() => { setOffset(0) }, [tab, from, to, status, dailyView, limit, changedInPeriod, modFrom, modTo])
 
   const params = useMemo(() => {
-    const p = { from, to, limit, offset }
+    const p = { limit, offset }
+    if (tab === 'items') {
+      if (qApplied) p.q = qApplied
+      if (status !== 'all') p.status = status
+      if (modFrom) p.modFrom = modFrom
+      if (modTo) p.modTo = modTo
+      return p
+    }
+    p.from = from
+    p.to = to
     if (tab !== 'runs') {
       if (qApplied) p.q = qApplied
       if (status !== 'all') p.status = status
@@ -209,11 +233,14 @@ export default function ZohoPriceHistory() {
     if (onlyChanges) p.onlyChanges = true
     if (changedInPeriod) p.changedInPeriod = true
     return p
-  }, [tab, from, to, qApplied, status, onlyChanges, changedInPeriod, limit, offset])
+  }, [tab, from, to, qApplied, status, onlyChanges, changedInPeriod, limit, offset, modFrom, modTo])
 
   const load = useCallback(() => {
     setLoading(true); setError(null)
-    const call = tab === 'daily' ? api.zohoDaily : tab === 'snapshots' ? api.zohoSnapshots : api.zohoRuns
+    const call = tab === 'daily' ? api.zohoDaily
+      : tab === 'snapshots' ? api.zohoSnapshots
+      : tab === 'items' ? api.zohoItems
+      : api.zohoRuns
     call(params)
       .then(d => setData({ rows: d.rows || [], total: d.total || 0, has_more: !!d.has_more }))
       .catch(e => setError(e.message))
@@ -228,19 +255,27 @@ export default function ZohoPriceHistory() {
   )
 
   const exportXlsx = () => {
-    const p = { from, to }
+    const p = tab === 'items'
+      ? {}
+      : { from, to }
     if (tab !== 'runs') {
       if (qApplied) p.q = qApplied
       if (status !== 'all') p.status = status
     }
-    if (onlyChanges) p.onlyChanges = true
-    if (changedInPeriod) p.changedInPeriod = true
+    if (tab === 'items') {
+      if (modFrom) p.modFrom = modFrom
+      if (modTo) p.modTo = modTo
+    } else {
+      if (onlyChanges) p.onlyChanges = true
+      if (changedInPeriod) p.changedInPeriod = true
+    }
     downloadApi(`/zoho-price-history/${tab}/export`, p, `zoho-price-history-${tab}.xlsx`).catch(e => setError(e.message))
   }
 
-  const cols = tab === 'snapshots' ? SNAPSHOT_COLS : tab === 'runs' ? RUN_COLS : null
+  const cols = tab === 'snapshots' ? SNAPSHOT_COLS : tab === 'runs' ? RUN_COLS : tab === 'items' ? ITEM_COLS : null
   const showStatus = tab !== 'runs'
   const showSearch = tab !== 'runs'
+  const showCaptureDates = tab !== 'items'
   const pageStart = data.total === 0 ? 0 : offset + 1
   const pageEnd = offset + data.rows.length
 
@@ -267,11 +302,21 @@ export default function ZohoPriceHistory() {
       </div>
 
       <div className="flex flex-wrap items-center gap-3 px-4 sm:px-6 mb-4">
-        <div className="flex items-center gap-2">
-          <input type="date" className="input w-40" value={from} onChange={e => setFrom(e.target.value)} max={to} />
-          <span className="text-gray-400 text-sm">to</span>
-          <input type="date" className="input w-40" value={to} onChange={e => setTo(e.target.value)} min={from} />
-        </div>
+        {showCaptureDates && (
+          <div className="flex items-center gap-2">
+            <input type="date" className="input w-40" value={from} onChange={e => setFrom(e.target.value)} max={to} />
+            <span className="text-gray-400 text-sm">to</span>
+            <input type="date" className="input w-40" value={to} onChange={e => setTo(e.target.value)} min={from} />
+          </div>
+        )}
+        {tab === 'items' && (
+          <div className="flex items-center gap-2">
+            <span className="text-gray-500 text-sm whitespace-nowrap">Modified in Zoho</span>
+            <input type="date" className="input w-40" value={modFrom} onChange={e => setModFrom(e.target.value)} max={modTo || undefined} title="Optional — from date" />
+            <span className="text-gray-400 text-sm">to</span>
+            <input type="date" className="input w-40" value={modTo} onChange={e => setModTo(e.target.value)} min={modFrom || undefined} title="Optional — to date" />
+          </div>
+        )}
         {showSearch && (
           <div className="relative">
             <Search size={15} className="absolute left-2.5 top-2.5 text-gray-400" />
@@ -325,6 +370,12 @@ export default function ZohoPriceHistory() {
           Showing snapshots for SKUs that changed price at least once between {from} and {to}.
         </p>
       )}
+      {tab === 'items' && !loading && (
+        <p className="px-4 sm:px-6 -mt-2 mb-3 text-xs text-gray-500">
+          {data.total.toLocaleString()} Zoho catalog item{data.total === 1 ? '' : 's'} — sorted by most recently modified in Zoho.
+          {modFrom || modTo ? ` Filtered to modified ${modFrom || '…'} → ${modTo || '…'}.` : ''}
+        </p>
+      )}
 
       {error && <ErrorMsg error={error} />}
 
@@ -333,7 +384,7 @@ export default function ZohoPriceHistory() {
           {loading ? (
             <div className="p-8"><Spinner /></div>
           ) : data.rows.length === 0 ? (
-            <Empty label={onlyChanges ? 'No price changes in this date range' : 'No rows for these filters'} />
+            <Empty label={onlyChanges ? 'No price changes in this date range' : tab === 'items' ? 'No items match these filters' : 'No rows for these filters'} />
           ) : tab === 'daily' ? (
             onlyChanges
               ? <DailyChangesTable rows={data.rows} />

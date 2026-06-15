@@ -129,6 +129,7 @@ export const api = {
   zohoPeriods:   (p) => get('/zoho-price-history/daily', p), // legacy alias
   zohoSnapshots: (p) => get('/zoho-price-history/snapshots', p),
   zohoRuns:      (p) => get('/zoho-price-history/runs', p),
+  zohoItems:     (p) => get('/zoho-price-history/items', p),
   zohoExportUrl: (kind, p) => apiUrl(`/zoho-price-history/${kind}/export`, p),
 
   // Sales Tax estimator

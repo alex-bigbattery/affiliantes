@@ -149,7 +149,7 @@ export default function Coupons() {
   const [data, setData]       = useState({ items: [], summary: null })
   const [loading, setLoading] = useState(true)
   const [error, setError]     = useState(null)
-  const [tab, setTab]         = useState('wc_linked')
+  const [tab, setTab]         = useState('all')
   const [search, setSearch]   = useState('')
   const [editing, setEditing] = useState(null)
 
@@ -177,11 +177,11 @@ export default function Coupons() {
   }, [data.items, tab, search])
 
   const tabs = [
+    { key: 'all',         n: s?.total_codes },
     { key: 'wc_linked',   n: s?.wc_linked },
     { key: 'zoho_only',   n: s?.zoho_only },
     { key: 'wc_unlinked', n: s?.wc_unlinked },
     { key: 'wc_promo',    n: s?.wc_promo },
-    { key: 'all',         n: s?.total_codes },
   ]
 
   const headers = tableHeaders(tab)

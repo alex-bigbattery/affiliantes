@@ -1,9 +1,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Zoho Price History — READ-ONLY consumption of three tables populated by an
-// EXTERNAL capture service (item_price_history, item_price_snapshots,
-// item_price_snapshot_runs). This module NEVER writes to those tables (no
-// INSERT/UPDATE/DELETE/DDL) and only issues short parameterized SELECTs via the
-// shared pg pool.
+// Zoho Price History — READ-ONLY consumption of capture tables
+// (item_price_history, item_price_snapshots, item_price_snapshot_runs) plus the
+// Zoho Books catalog sync table `items` for per-item last_modified_time.
+// This module NEVER writes (no INSERT/UPDATE/DELETE/DDL) and only issues short
+// parameterized SELECTs via the shared pg pool.
 //
 // AUTH NOTE: the spec asks for these endpoints to sit behind the app's existing
 // auth middleware (401 for anonymous + role tiers). This dashboard currently has
@@ -44,6 +44,29 @@ function parseRange(query) {
   }
   if (from > to) throw new HttpError(400, "'from' must be <= 'to'")
   return { from, to, winStart: `${from}T00:00:00.000Z`, winEnd: `${to}T23:59:59.999Z` }
+}
+
+function parseOptionalDate(name, value) {
+  if (value == null || value === '') return null
+  const v = String(value)
+  if (!DATE_RE.test(v) || Number.isNaN(Date.parse(v))) {
+    throw new HttpError(400, `Invalid '${name}' date — expected YYYY-MM-DD`)
+  }
+  return v
+}
+
+function parseItemFilters(query) {
+  const modFrom = parseOptionalDate('modFrom', query.modFrom)
+  const modTo = parseOptionalDate('modTo', query.modTo)
+  if (modFrom && modTo && modFrom > modTo) {
+    throw new HttpError(400, "'modFrom' must be <= 'modTo'")
+  }
+  return {
+    q: query.q?.trim() || '',
+    status: parseStatus(query.status),
+    modFrom,
+    modTo,
+  }
 }
 
 function parseStatus(s) {
@@ -109,6 +132,15 @@ const RUN_COLS = [
   { header: 'Status',      key: 'status',        type: 'text',     width: 12 },
   { header: 'Items',       key: 'item_count',    type: 'int',      width: 10 },
   { header: 'Changed',     key: 'changed_count', type: 'int',      width: 10 },
+]
+const ITEM_COLS = [
+  { header: 'SKU',                key: 'sku',                 type: 'text',     width: 18 },
+  { header: 'Name',               key: 'name',                type: 'text',     width: 42 },
+  { header: 'Rate',               key: 'rate',                type: 'money',    width: 14 },
+  { header: 'Status',             key: 'status',              type: 'text',     width: 12 },
+  { header: 'Product Type',       key: 'product_type',        type: 'text',     width: 16 },
+  { header: 'Zoho Last Modified', key: 'last_modified_time',  type: 'datetime', width: 22 },
+  { header: 'Last Synced',        key: 'synced_at',           type: 'datetime', width: 22 },
 ]
 
 // ── query builders ────────────────────────────────────────────────────────────
@@ -199,15 +231,37 @@ function runsFromWhere(f) {
   return { sql: `FROM item_price_snapshot_runs r WHERE ${where.join(' AND ')}`, vals }
 }
 
+// Latest Zoho modification per catalog item (from Zoho Books sync table `items`).
+function itemsFromWhere(f) {
+  const vals = []
+  const p = v => { vals.push(v); return '$' + vals.length }
+  const where = [`COALESCE(i.sku, '') <> ''`]
+  if (f.q) {
+    const qp = p(`%${f.q}%`)
+    where.push(`(i.sku ILIKE ${qp} OR i.name ILIKE ${qp})`)
+  }
+  if (f.status) where.push(`i.status = ${p(f.status)}`)
+  if (f.modFrom) {
+    where.push(`NULLIF(LEFT(i.last_modified_time, 10), '')::date >= ${p(f.modFrom)}::date`)
+  }
+  if (f.modTo) {
+    where.push(`NULLIF(LEFT(i.last_modified_time, 10), '')::date <= ${p(f.modTo)}::date`)
+  }
+  return { sql: `FROM items i WHERE ${where.join(' AND ')}`, vals }
+}
+
 const SELECT = {
   snapshots: `SELECT s.id, s.sku, s.name, s.rate, s.status, s.captured_at,
                      s.zoho_last_modified_time `,
   runs:      `SELECT r.id, r.started_at, r.finished_at, r.status,
                      r.item_count, r.changed_count `,
+  items:     `SELECT i.item_id, i.sku, i.name, i.rate, i.status, i.product_type,
+                     i.last_modified_time, i.synced_at `,
 }
 const ORDER = {
   snapshots: ` ORDER BY s.captured_at DESC, s.id DESC`,
   runs:      ` ORDER BY r.started_at DESC`,
+  items:     ` ORDER BY NULLIF(i.last_modified_time, '') DESC NULLS LAST, i.sku ASC`,
 }
 
 function jsonRows(kind, rows) {
@@ -329,9 +383,11 @@ export function registerZohoPriceHistory(app) {
   const DAILY_PARAMS    = ['from', 'to', 'q', 'status', 'onlyChanges', 'changedInPeriod', 'limit', 'offset']
   const SNAPSHOT_PARAMS = ['from', 'to', 'q', 'status', 'changedInPeriod', 'limit', 'offset']
   const RUN_PARAMS      = ['from', 'to', 'limit', 'offset']
+  const ITEM_PARAMS     = ['q', 'status', 'modFrom', 'modTo', 'limit', 'offset']
   const DAILY_EXPORT    = ['from', 'to', 'q', 'status', 'onlyChanges', 'changedInPeriod']
   const SNAPSHOT_EXPORT = ['from', 'to', 'q', 'status', 'changedInPeriod']
   const RUN_EXPORT      = ['from', 'to']
+  const ITEM_EXPORT     = ['q', 'status', 'modFrom', 'modTo']
 
   const dailyFilters = f => ([
     ['from', f.from], ['to', f.to], ['search (sku/name)', f.q || '(none)'],
@@ -344,6 +400,13 @@ export function registerZohoPriceHistory(app) {
     ['only items with price change in period', f.changedInPeriod ? 'yes' : 'no'],
   ])
   const runFilters = f => ([['from', f.from], ['to', f.to]])
+  const itemFilters = f => ([
+    ['search (sku/name)', f.q || '(none)'],
+    ['status', f.status || 'all'],
+    ['modified in Zoho from', f.modFrom || '(any)'],
+    ['modified in Zoho to', f.modTo || '(any)'],
+    ['source', 'items table (Zoho Books catalog sync)'],
+  ])
 
   // ── DAILY (one price per SKU per calendar day) ──
   app.get('/api/zoho-price-history/daily', wrap(async (req, res) => {
@@ -402,5 +465,22 @@ export function registerZohoPriceHistory(app) {
     const f = { from, to, winStart, winEnd }
     const { rows, truncated } = await exportRows('runs', runsFromWhere, f)
     await streamWorkbook(res, { subtab: 'runs', sourceTable: 'item_price_snapshot_runs', cols: RUN_COLS, rows, truncated, filters: runFilters(f), from, to })
+  }))
+
+  // ── ITEMS (latest Zoho last_modified_time per catalog item) ──
+  app.get('/api/zoho-price-history/items', wrap(async (req, res) => {
+    rejectUnknown(req.query, ITEM_PARAMS)
+    const { limit, offset } = parsePaging(req.query)
+    const f = { ...parseItemFilters(req.query), limit, offset }
+    res.json(await listQuery('items', itemsFromWhere, f))
+  }))
+
+  app.get('/api/zoho-price-history/items/export', wrap(async (req, res) => {
+    rejectUnknown(req.query, ITEM_EXPORT)
+    const f = parseItemFilters(req.query)
+    const { rows, truncated } = await exportRows('items', itemsFromWhere, f)
+    const from = f.modFrom || 'all'
+    const to = f.modTo || 'all'
+    await streamWorkbook(res, { subtab: 'items', sourceTable: 'items', cols: ITEM_COLS, rows, truncated, filters: itemFilters(f), from, to })
   }))
 }

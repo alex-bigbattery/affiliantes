@@ -121,7 +121,7 @@ export async function awpUpdateReferral(referralId, fields) {
     if (e.status === 404) {
       throw new Error(
         'Cannot mark referral paid: install wordpress/bb-affiliate-dashboard-bridge.php on bigbattery.com '
-        + '(wp-content/mu-plugins/) and add BB_AFFWP_PUBLIC_KEY + BB_AFFWP_TOKEN to wp-config.php, '
+        + '(wp-content/mu-plugins/) with bb-affiliate-dashboard-config.php (same AFFWP keys as Render), '
         + 'OR install AffiliateWP REST API Extended addon.',
       )
     }
