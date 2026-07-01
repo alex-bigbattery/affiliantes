@@ -25,9 +25,9 @@ const PRODUCT_LINE_FILTER = `
   AND NOT COALESCE((li->>'is_component')::boolean, false)
 `
 
-/** ISO YYYY-MM-DD prefix from Zoho TEXT timestamps — never ::date cast on raw values. */
+/** ISO date from Zoho TEXT timestamps — regex guard, then LEFT + ::date (never cast raw column). */
 function zohoIsoDateExpr(expr) {
-  return `CASE WHEN ${expr} ~ '^\\d{4}-\\d{2}-\\d{2}' THEN LEFT(${expr}, 10) END`
+  return `CASE WHEN ${expr} ~ '^\\d{4}-\\d{2}-\\d{2}' THEN LEFT(${expr}, 10)::date END`
 }
 
 class HttpError extends Error {
@@ -306,10 +306,10 @@ function itemsQueryBody(f) {
   }
   if (f.status) where.push(`i.status = ${p(f.status)}`)
   if (f.modFrom) {
-    where.push(`${zohoIsoDateExpr('i.last_modified_time')} >= ${p(f.modFrom)}`)
+    where.push(`${zohoIsoDateExpr('i.last_modified_time')} >= ${p(f.modFrom)}::date`)
   }
   if (f.modTo) {
-    where.push(`${zohoIsoDateExpr('i.last_modified_time')} <= ${p(f.modTo)}`)
+    where.push(`${zohoIsoDateExpr('i.last_modified_time')} <= ${p(f.modTo)}::date`)
   }
 
   const salesDateWhere = []
@@ -463,7 +463,7 @@ async function attachZohoModifiedFlags(items, from, to) {
   const byId = new Map(rows.map(r => [r.item_id, r]))
   for (const item of items) {
     const meta = byId.get(item.item_id)
-    const modDate = meta?.mod_date ?? null
+    const modDate = meta?.mod_date != null ? toIsoDateOnly(meta.mod_date) : null
     item.last_modified_time = meta?.last_modified_time ?? null
     item.zoho_modified_date = modDate
     item.zoho_modified_in_range = !!(modDate && modDate >= from && modDate <= to)
@@ -484,7 +484,7 @@ async function attachZohoModifiedFlagsToDailyRows(rows, from, to) {
   const byId = new Map(metaRows.map(r => [r.item_id, r]))
   return rows.map(r => {
     const meta = byId.get(r.item_id)
-    const modDate = meta?.mod_date ?? null
+    const modDate = meta?.mod_date != null ? toIsoDateOnly(meta.mod_date) : null
     return {
       ...r,
       last_modified_time: meta?.last_modified_time ?? null,
