@@ -162,6 +162,7 @@ const rowKey = (tab, r, i) =>
   : (r.id ?? r.run_id)
 
 function DailyMatrixTable({ dates, monthGroups, rows, rowStart = 1 }) {
+  const stickyBg = (highlight) => highlight ? 'bg-sky-50' : 'bg-white'
   return (
     <div className="overflow-x-auto">
       <table className="w-full min-w-max border-collapse">
@@ -188,22 +189,31 @@ function DailyMatrixTable({ dates, monthGroups, rows, rowStart = 1 }) {
         <tbody className="divide-y divide-gray-100">
           {rows.map((r, i) => {
             let prev = null
+            const modRow = !!r.zoho_modified_in_range
+            const modTitle = modRow
+              ? `Zoho item edited ${r.zoho_modified_date || ''} (any field — verify price in sales orders)`
+              : undefined
             return (
-              <tr key={r.item_id ?? r.sku ?? i} className="tr-hover">
-                <td className="td sticky left-0 z-10 bg-white text-xs text-gray-400 tabular-nums text-right w-10">{rowStart + i}</td>
-                <td className="td sticky left-10 z-10 bg-white font-mono text-[11px] text-gray-600 w-36 truncate" title={r.sku}>{r.sku}</td>
-                <td className="td sticky left-[184px] z-10 bg-white text-sm text-gray-900 max-w-[220px] truncate" title={r.name}>{r.name}</td>
+              <tr key={r.item_id ?? r.sku ?? i} className={`tr-hover ${modRow ? 'bg-sky-50/80' : ''}`} title={modTitle}>
+                <td className={`td sticky left-0 z-10 text-xs text-gray-400 tabular-nums text-right w-10 ${stickyBg(modRow)}`}>{rowStart + i}</td>
+                <td className={`td sticky left-10 z-10 font-mono text-[11px] w-36 truncate ${modRow ? 'bg-sky-50 text-sky-900 font-semibold' : 'bg-white text-gray-600'}`} title={modTitle || r.sku}>{r.sku}</td>
+                <td className={`td sticky left-[184px] z-10 text-sm max-w-[220px] truncate ${modRow ? 'bg-sky-50 text-sky-950' : 'bg-white text-gray-900'}`} title={modTitle || r.name}>{r.name}</td>
                 {dates.map(dt => {
                   const rate = r.rates?.[dt]
-                  const changed = prev != null && rate != null && rate !== prev
+                  const priceChanged = prev != null && rate != null && rate !== prev
+                  const modDay = modRow && r.zoho_modified_date === dt
                   if (rate != null) prev = rate
+                  let cellCls = 'td text-center text-xs tabular-nums px-1 border-l border-gray-100'
+                  if (modDay) cellCls += ' bg-sky-300 font-semibold text-sky-950'
+                  else if (priceChanged) cellCls += ' bg-amber-50 font-semibold text-amber-900'
+                  else if (modRow) cellCls += ' bg-sky-50'
                   return (
-                    <td key={dt} className={`td text-center text-xs tabular-nums px-1 border-l border-gray-100 ${changed ? 'bg-amber-50 font-semibold text-amber-900' : ''}`}>
+                    <td key={dt} className={cellCls} title={modDay ? `Zoho edited on ${dt}` : undefined}>
                       {rate == null ? <span className="text-gray-200">·</span> : fmt(rate)}
                     </td>
                   )
                 })}
-                <td className="td text-right text-sm font-medium border-l border-gray-200">{fmt(r.current_rate)}</td>
+                <td className={`td text-right text-sm font-medium border-l border-gray-200 ${modRow ? 'bg-sky-50' : ''}`}>{fmt(r.current_rate)}</td>
               </tr>
             )
           })}
@@ -226,7 +236,8 @@ function DailyChangesTable({ rows, rowStart = 1 }) {
       </thead>
       <tbody className="divide-y divide-gray-100">
         {rows.map((r, i) => (
-          <tr key={rowKey('daily', r, i)} className="tr-hover">
+          <tr key={rowKey('daily', r, i)} className={`tr-hover ${r.zoho_modified_in_range ? 'bg-sky-50/80' : ''}`}
+            title={r.zoho_modified_in_range ? `Zoho edited ${r.zoho_modified_date || ''}` : undefined}>
             <td className="td text-xs text-gray-400 tabular-nums text-right w-10">{rowStart + i}</td>
             <td className="td max-w-md"><ItemCell sku={r.sku} name={r.name} /></td>
             <td className="td text-sm text-gray-600 whitespace-nowrap">{fmtDate(r.price_date)}</td>
@@ -256,7 +267,8 @@ function DailyCalendarTable({ groups, rowStart = 1 }) {
           return g.rows.map((r, i) => {
             const rowNum = n++
             return (
-            <tr key={`${g.item_id}-${r.price_date}`} className={`tr-hover ${i === 0 ? 'border-t border-gray-200' : ''}`}>
+            <tr key={`${g.item_id}-${r.price_date}`} className={`tr-hover ${i === 0 ? 'border-t border-gray-200' : ''} ${r.zoho_modified_in_range ? 'bg-sky-50/80' : ''}`}
+              title={r.zoho_modified_in_range ? `Zoho edited ${r.zoho_modified_date || ''}` : undefined}>
               <td className="td text-xs text-gray-400 tabular-nums text-right w-10 align-top">{rowNum}</td>
               {i === 0 && (
                 <td className="td align-top max-w-md" rowSpan={g.rows.length}>
@@ -287,6 +299,7 @@ export default function ZohoPriceHistory() {
   const [qApplied, setQApplied] = useState('')
   const [status, setStatus]     = useState('all')
   const [changedInPeriod, setChangedInPeriod] = useState(false)
+  const [zohoModifiedOnly, setZohoModifiedOnly] = useState(false)
   const [modFrom, setModFrom] = useState('')
   const [modTo, setModTo] = useState('')
   const [soldFrom, setSoldFrom] = useState(daysAgoISO(30))
@@ -308,7 +321,7 @@ export default function ZohoPriceHistory() {
     return () => clearTimeout(t)
   }, [q])
 
-  useEffect(() => { setOffset(0) }, [tab, from, to, status, dailyView, limit, changedInPeriod, modFrom, modTo, soldFrom, soldTo, itemSort, itemOrder])
+  useEffect(() => { setOffset(0) }, [tab, from, to, status, dailyView, limit, changedInPeriod, zohoModifiedOnly, modFrom, modTo, soldFrom, soldTo, itemSort, itemOrder])
 
   const handleItemSort = useCallback((key) => {
     setOffset(0)
@@ -341,8 +354,9 @@ export default function ZohoPriceHistory() {
     }
     if (onlyChanges) p.onlyChanges = true
     if (changedInPeriod) p.changedInPeriod = true
+    if (zohoModifiedOnly) p.zohoModifiedOnly = true
     return p
-  }, [tab, from, to, qApplied, status, onlyChanges, changedInPeriod, limit, offset, modFrom, modTo, soldFrom, soldTo, itemSort, itemOrder])
+  }, [tab, from, to, qApplied, status, onlyChanges, changedInPeriod, zohoModifiedOnly, limit, offset, modFrom, modTo, soldFrom, soldTo, itemSort, itemOrder])
 
   const load = useCallback(() => {
     setLoading(true); setError(null)
@@ -394,6 +408,7 @@ export default function ZohoPriceHistory() {
     } else {
       if (onlyChanges) p.onlyChanges = true
       if (changedInPeriod) p.changedInPeriod = true
+      if (zohoModifiedOnly) p.zohoModifiedOnly = true
     }
     downloadApi(`/zoho-price-history/${tab}/export`, p, `zoho-price-history-${tab}.xlsx`).catch(e => setError(e.message))
   }
@@ -478,6 +493,17 @@ export default function ZohoPriceHistory() {
           </label>
         )}
         {tab === 'daily' && (
+          <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              className="rounded border-sky-400 text-sky-600 focus:ring-sky-500"
+              checked={zohoModifiedOnly}
+              onChange={e => setZohoModifiedOnly(e.target.checked)}
+            />
+            <span className="text-sky-800">Zoho edited in period</span>
+          </label>
+        )}
+        {tab === 'daily' && (
           <div className="flex rounded-lg border border-gray-200 p-0.5 bg-gray-50">
             {DAILY_VIEWS.map(v => (
               <button key={v.key} type="button" onClick={() => setDailyView(v.key)}
@@ -496,11 +522,12 @@ export default function ZohoPriceHistory() {
       {tab === 'daily' && !loading && (
         <p className="px-4 sm:px-6 -mt-2 mb-3 text-xs text-gray-500">
           {dailyView === 'matrix'
-            ? `${matrixData.total.toLocaleString()} SKU${matrixData.total === 1 ? '' : 's'} × ${matrixData.dates.length} day${matrixData.dates.length === 1 ? '' : 's'} (${from} → ${to}). Yellow = price changed from prior day. Excel export uses the same layout.`
+            ? `${matrixData.total.toLocaleString()} SKU${matrixData.total === 1 ? '' : 's'} × ${matrixData.dates.length} day${matrixData.dates.length === 1 ? '' : 's'} (${from} → ${to}). Yellow = price changed from prior day. Blue row = Zoho edited the item in this range (any field — check sales for actual price). Darker blue cell = edit date.`
             : onlyChanges
             ? `${data.total.toLocaleString()} price change${data.total === 1 ? '' : 's'} in range — items with a stable rate are hidden.`
             : `${dailyGroups.length.toLocaleString()} item${dailyGroups.length === 1 ? '' : 's'}, ${data.total.toLocaleString()} day row${data.total === 1 ? '' : 's'} — grouped by SKU.`}
           {changedInPeriod && dailyView !== 'matrix' && ' Showing only SKUs with at least one rate change in the selected dates.'}
+          {zohoModifiedOnly && ' Showing only items Zoho edited in the selected dates (blue rows).'}
         </p>
       )}
       {tab === 'snapshots' && !loading && changedInPeriod && (
@@ -524,7 +551,12 @@ export default function ZohoPriceHistory() {
           {loading ? (
             <div className="p-8"><Spinner /></div>
           ) : activeData.rows.length === 0 ? (
-            <Empty label={onlyChanges ? 'No price changes in this date range' : tab === 'items' ? 'No items match these filters' : 'No rows for these filters'} />
+            <Empty label={
+              zohoModifiedOnly ? 'No Zoho-edited items in this date range'
+              : onlyChanges ? 'No price changes in this date range'
+              : tab === 'items' ? 'No items match these filters'
+              : 'No rows for these filters'
+            } />
           ) : tab === 'daily' ? (
             dailyView === 'matrix'
               ? <DailyMatrixTable dates={matrixData.dates} monthGroups={matrixData.monthGroups} rows={matrixData.rows} rowStart={rowStart} />

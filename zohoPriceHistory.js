@@ -195,6 +195,16 @@ const ITEM_COLS = [
 ]
 
 // ── query builders ────────────────────────────────────────────────────────────
+function zohoModifiedInRangeSql(fromD, toD) {
+  const modDate = zohoIsoDateExpr('last_modified_time')
+  return `d.item_id IN (
+    SELECT item_id FROM items
+    WHERE ${modDate} IS NOT NULL
+      AND ${modDate} >= ${fromD}
+      AND ${modDate} <= ${toD}
+  )`
+}
+
 // Daily prices: expand item_price_history into one row per SKU per calendar day.
 function dailyQuery(f) {
   const vals = []
@@ -226,6 +236,9 @@ function dailyQuery(f) {
       GROUP BY h.item_id
       HAVING COUNT(DISTINCT h.rate) > 1
     )`)
+  }
+  if (f.zohoModifiedOnly) {
+    filters.push(zohoModifiedInRangeSql(fromD, toD))
   }
   const where = filters.length ? ` WHERE ${filters.join(' AND ')}` : ''
 
@@ -364,7 +377,8 @@ async function dailyListQuery(f) {
   const lim = '$' + (vals.length + 1)
   const off = '$' + (vals.length + 2)
   const { rows } = await pool.query(`${sql}${orderBy} LIMIT ${lim} OFFSET ${off}`, pageVals)
-  return { rows: jsonRows('daily', rows), total, has_more: f.offset + rows.length < total }
+  const flagged = await attachZohoModifiedFlagsToDailyRows(jsonRows('daily', rows), f.from, f.to)
+  return { rows: flagged, total, has_more: f.offset + rows.length < total }
 }
 
 async function dailyExportRows(f) {
@@ -411,7 +425,15 @@ function pivotDailyRows(longRows, from, to) {
   for (const r of longRows) {
     const key = r.item_id ?? r.sku
     if (!byItem.has(key)) {
-      byItem.set(key, { item_id: r.item_id, sku: r.sku, name: r.name, rates: {} })
+      byItem.set(key, {
+        item_id: r.item_id,
+        sku: r.sku,
+        name: r.name,
+        rates: {},
+        last_modified_time: r.last_modified_time ?? null,
+        zoho_modified_in_range: !!r.zoho_modified_in_range,
+        zoho_modified_date: r.zoho_modified_date ?? null,
+      })
     }
     const dt = toIsoDateOnly(r.price_date)
     if (dt) byItem.get(key).rates[dt] = num(r.rate)
@@ -425,6 +447,51 @@ function pivotDailyRows(longRows, from, to) {
     item.current_rate = current
   }
   return { dates, monthGroups: groupDatesByMonth(dates), items }
+}
+
+/** Flag items whose Zoho catalog last_modified_time falls in [from, to] (any field edit). */
+async function attachZohoModifiedFlags(items, from, to) {
+  if (!items.length) return items
+  const ids = items.map(i => i.item_id).filter(Boolean)
+  if (!ids.length) return items
+  const modExpr = zohoIsoDateExpr('last_modified_time')
+  const { rows } = await pool.query(
+    `SELECT item_id, last_modified_time, ${modExpr} AS mod_date
+     FROM items WHERE item_id = ANY($1::text[])`,
+    [ids],
+  )
+  const byId = new Map(rows.map(r => [r.item_id, r]))
+  for (const item of items) {
+    const meta = byId.get(item.item_id)
+    const modDate = meta?.mod_date ?? null
+    item.last_modified_time = meta?.last_modified_time ?? null
+    item.zoho_modified_date = modDate
+    item.zoho_modified_in_range = !!(modDate && modDate >= from && modDate <= to)
+  }
+  return items
+}
+
+async function attachZohoModifiedFlagsToDailyRows(rows, from, to) {
+  if (!rows.length) return rows
+  const ids = [...new Set(rows.map(r => r.item_id).filter(Boolean))]
+  if (!ids.length) return rows
+  const modExpr = zohoIsoDateExpr('last_modified_time')
+  const { rows: metaRows } = await pool.query(
+    `SELECT item_id, last_modified_time, ${modExpr} AS mod_date
+     FROM items WHERE item_id = ANY($1::text[])`,
+    [ids],
+  )
+  const byId = new Map(metaRows.map(r => [r.item_id, r]))
+  return rows.map(r => {
+    const meta = byId.get(r.item_id)
+    const modDate = meta?.mod_date ?? null
+    return {
+      ...r,
+      last_modified_time: meta?.last_modified_time ?? null,
+      zoho_modified_date: modDate,
+      zoho_modified_in_range: !!(modDate && modDate >= from && modDate <= to),
+    }
+  })
 }
 
 async function dailyMatrixListQuery(f) {
@@ -449,6 +516,7 @@ async function dailyMatrixListQuery(f) {
     ORDER BY d.sku ASC, d.price_date ASC`
   const { rows } = await pool.query(pageSql, vals)
   const { dates, monthGroups, items } = pivotDailyRows(jsonRows('daily', rows), f.from, f.to)
+  await attachZohoModifiedFlags(items, f.from, f.to)
   return {
     dates,
     monthGroups,
@@ -461,6 +529,8 @@ async function dailyMatrixListQuery(f) {
 const HEADER_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F3864' } }
 const HEADER_FONT = { bold: true, color: { argb: 'FFFFFFFF' } }
 const CHANGE_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF2CC' } }
+const MODIFIED_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDBEAFE' } }
+const MODIFIED_DAY_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF93C5FD' } }
 
 function styleHeaderCell(cell) {
   cell.font = HEADER_FONT
@@ -474,6 +544,7 @@ async function streamDailyCalendarWorkbook(res, { rows, from, to, truncated, fil
   const stamp = exportedAtISO.slice(0, 16).replace(/:/g, '') + 'Z'
   const filename = `zoho_daily_calendar_${from}_to_${to}_${stamp}.xlsx`
   const { dates, monthGroups, items } = pivotDailyRows(jsonRows('daily', rows), from, to)
+  await attachZohoModifiedFlags(items, from, to)
 
   const wb = new ExcelJS.Workbook()
   wb.creator = 'BigBattery Affiliate Dashboard'
@@ -526,6 +597,14 @@ async function streamDailyCalendarWorkbook(res, { rows, from, to, truncated, fil
     ws.getCell(rowNum, 1).value = idx + 1
     ws.getCell(rowNum, 2).value = item.sku
     ws.getCell(rowNum, 3).value = item.name
+    if (item.zoho_modified_in_range) {
+      for (let c = 1; c <= rateCol; c++) {
+        const cell = ws.getCell(rowNum, c)
+        if (!cell.fill || cell.fill.fgColor?.argb !== CHANGE_FILL.fgColor.argb) {
+          cell.fill = MODIFIED_FILL
+        }
+      }
+    }
     let prev = null
     dates.forEach((dt, i) => {
       const rate = item.rates[dt]
@@ -534,7 +613,11 @@ async function streamDailyCalendarWorkbook(res, { rows, from, to, truncated, fil
       cell.value = rate
       cell.numFmt = '$#,##0.00'
       cell.alignment = { horizontal: 'center' }
-      if (prev != null && rate !== prev) cell.fill = CHANGE_FILL
+      if (item.zoho_modified_date === dt) {
+        cell.fill = MODIFIED_DAY_FILL
+      } else if (prev != null && rate !== prev) {
+        cell.fill = CHANGE_FILL
+      }
       prev = rate
     })
     const rateCell = ws.getCell(rowNum, rateCol)
@@ -557,7 +640,7 @@ async function streamDailyCalendarWorkbook(res, { rows, from, to, truncated, fil
   meta.addRow({ k: 'SKUs exported', v: items.length })
   meta.addRow({ k: 'Days in range', v: dates.length })
   meta.addRow({ k: 'Exported at (UTC)', v: exportedAtISO })
-  meta.addRow({ k: 'Note', v: 'Yellow cells = price changed from previous day in range. Read-only export.' })
+  meta.addRow({ k: 'Note', v: 'Yellow = price changed vs prior day. Light blue row = Zoho item edited in date range (any field). Darker blue cell = edit date. Read-only export.' })
 
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`)
@@ -668,11 +751,11 @@ async function streamWorkbook(res, { subtab, sourceTable, cols, rows, truncated,
 
 // ── route registration (mounted once from server.js) ──────────────────────────
 export function registerZohoPriceHistory(app) {
-  const DAILY_PARAMS    = ['from', 'to', 'q', 'status', 'onlyChanges', 'changedInPeriod', 'limit', 'offset']
+  const DAILY_PARAMS    = ['from', 'to', 'q', 'status', 'onlyChanges', 'changedInPeriod', 'zohoModifiedOnly', 'limit', 'offset']
   const SNAPSHOT_PARAMS = ['from', 'to', 'q', 'status', 'changedInPeriod', 'limit', 'offset']
   const RUN_PARAMS      = ['from', 'to', 'limit', 'offset']
   const ITEM_PARAMS     = ['q', 'status', 'modFrom', 'modTo', 'soldFrom', 'soldTo', 'sort', 'order', 'limit', 'offset']
-  const DAILY_EXPORT    = ['from', 'to', 'q', 'status', 'onlyChanges', 'changedInPeriod']
+  const DAILY_EXPORT    = ['from', 'to', 'q', 'status', 'onlyChanges', 'changedInPeriod', 'zohoModifiedOnly']
   const SNAPSHOT_EXPORT = ['from', 'to', 'q', 'status', 'changedInPeriod']
   const RUN_EXPORT      = ['from', 'to']
   const ITEM_EXPORT     = ['q', 'status', 'modFrom', 'modTo', 'soldFrom', 'soldTo', 'sort', 'order']
@@ -681,6 +764,7 @@ export function registerZohoPriceHistory(app) {
     ['from', f.from], ['to', f.to], ['search (sku/name)', f.q || '(none)'],
     ['status', f.status || 'all'], ['only days with price change', f.onlyChanges ? 'yes' : 'no'],
     ['only items with price change in period', f.changedInPeriod ? 'yes' : 'no'],
+    ['only Zoho-edited items in period', f.zohoModifiedOnly ? 'yes' : 'no'],
     ['granularity', 'calendar matrix — one row per SKU, columns = days in range'],
   ])
   const snapshotFilters = f => ([
@@ -701,27 +785,36 @@ export function registerZohoPriceHistory(app) {
     ['source', 'items table (Zoho Books catalog sync)'],
   ])
 
+  const dailyF = (query, paging) => ({
+    from: paging.from,
+    to: paging.to,
+    q: query.q?.trim() || '',
+    status: parseStatus(query.status),
+    onlyChanges: parseBool(query.onlyChanges),
+    changedInPeriod: parseBool(query.changedInPeriod),
+    zohoModifiedOnly: parseBool(query.zohoModifiedOnly),
+    ...paging,
+  })
+
   // ── DAILY (one price per SKU per calendar day) ──
   app.get('/api/zoho-price-history/daily', wrap(async (req, res) => {
     rejectUnknown(req.query, DAILY_PARAMS)
     const { from, to } = parseRange(req.query)
     const { limit, offset } = parsePaging(req.query)
-    const f = { from, to, q: req.query.q?.trim() || '', status: parseStatus(req.query.status), onlyChanges: parseBool(req.query.onlyChanges), changedInPeriod: parseBool(req.query.changedInPeriod), limit, offset }
-    res.json(await dailyListQuery(f))
+    res.json(await dailyListQuery(dailyF(req.query, { from, to, limit, offset })))
   }))
 
   app.get('/api/zoho-price-history/daily/matrix', wrap(async (req, res) => {
     rejectUnknown(req.query, DAILY_PARAMS)
     const { from, to } = parseRange(req.query)
     const { limit, offset } = parsePaging(req.query)
-    const f = { from, to, q: req.query.q?.trim() || '', status: parseStatus(req.query.status), onlyChanges: parseBool(req.query.onlyChanges), changedInPeriod: parseBool(req.query.changedInPeriod), limit, offset }
-    res.json(await dailyMatrixListQuery(f))
+    res.json(await dailyMatrixListQuery(dailyF(req.query, { from, to, limit, offset })))
   }))
 
   app.get('/api/zoho-price-history/daily/export', wrap(async (req, res) => {
     rejectUnknown(req.query, DAILY_EXPORT)
     const { from, to } = parseRange(req.query)
-    const f = { from, to, q: req.query.q?.trim() || '', status: parseStatus(req.query.status), onlyChanges: parseBool(req.query.onlyChanges), changedInPeriod: parseBool(req.query.changedInPeriod) }
+    const f = dailyF(req.query, { from, to })
     const { rows, truncated } = await dailyExportRows(f)
     await streamDailyCalendarWorkbook(res, { rows, from, to, truncated, filters: dailyFilters(f) })
   }))
@@ -731,8 +824,7 @@ export function registerZohoPriceHistory(app) {
     rejectUnknown(req.query, DAILY_PARAMS)
     const { from, to } = parseRange(req.query)
     const { limit, offset } = parsePaging(req.query)
-    const f = { from, to, q: req.query.q?.trim() || '', status: parseStatus(req.query.status), onlyChanges: parseBool(req.query.onlyChanges), changedInPeriod: parseBool(req.query.changedInPeriod), limit, offset }
-    res.json(await dailyListQuery(f))
+    res.json(await dailyListQuery(dailyF(req.query, { from, to, limit, offset })))
   }))
 
   // ── SNAPSHOTS ──
